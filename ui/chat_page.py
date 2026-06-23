@@ -54,7 +54,6 @@ _MODE_OPTIONS = [
 def _add_subgraph_widget(graph_id: str, page_client) -> None:
     """현재 NiceGUI 컨텍스트 안에 서브그래프 토글 위젯을 추가한다."""
     state = {'shown': False, 'loaded': False}
-    iframe_id = f'sgframe-{graph_id}'
 
     toggle_btn = (
         ui.button('서브그래프 보기', icon='account_tree')
@@ -70,13 +69,11 @@ def _add_subgraph_widget(graph_id: str, page_client) -> None:
         'border:1px solid #c7d2fe; border-radius:8px; overflow:hidden; background:white;'
     )
     with frame_container:
-        # src는 비워두고, 처음 펼칠 때 JS로 주입 (컨테이너가 보이는 상태에서 로드해야
-        # vis.js가 올바른 크기로 그래프를 렌더링함)
-        ui.html(
-            f'<iframe id="{iframe_id}" src="about:blank" '
-            f'style="width:100%;height:100%;border:none;display:block;">'
-            f'</iframe>'
-        )
+        # iframe 을 NiceGUI element 로 직접 만들어 src 를 Python prop 으로 제어한다.
+        # (run_javascript / getElementById 방식은 슬롯 컨텍스트·타이밍 문제가 있었음)
+        iframe = ui.element('iframe').style(
+            'width:100%;height:100%;border:none;display:block;'
+        ).props('src=about:blank')
     frame_container.set_visibility(False)
 
     async def _toggle():
@@ -85,11 +82,9 @@ def _add_subgraph_widget(graph_id: str, page_client) -> None:
         toggle_btn.props(f"icon={'expand_less' if state['shown'] else 'account_tree'}")
         if state['shown'] and not state['loaded']:
             state['loaded'] = True
-            # 컨테이너가 화면에 반영될 시간을 잠깐 준 뒤 iframe src 주입
+            # 컨테이너가 보이게 된 뒤 iframe src 를 주입 → vis.js 가 올바른 크기로 렌더링
             await asyncio.sleep(0.05)
-            await page_client.run_javascript(
-                f"var f=document.getElementById('{iframe_id}'); if(f) f.src='/graph/{graph_id}';"
-            )
+            iframe.props(f'src=/graph/{graph_id}')
 
     toggle_btn.on('click', _toggle)
 
