@@ -208,12 +208,12 @@ def build_chat_page():
                     ppr_chk.bind_value(state, 'use_papers')
 
                 # input
-                with ui.row().classes('w-full items-center gap-2'):
+                with ui.row().classes('w-full no-wrap items-end px-0 py-1 flex-shrink-0 gap-2'):
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꿈, Enter: 전송)')
-                        .classes('flex-1 rounded-xl text-sm')
+                        .classes('flex-grow text-sm')
                         .style('font-size:14px;')
-                        .props('rows=2 outlined dense')
+                        .props('outlined rounded dense autogrow')
                     )
                     send_btn = (
                         ui.button(icon='arrow_upward')
