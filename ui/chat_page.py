@@ -34,39 +34,35 @@ _MODE_OPTIONS = [
 ]
 
 
-def _subgraph_html(graph_id: str) -> str:
-    gid = graph_id
-    return f'''
-    <div style="margin-top:8px; width:100%;">
-      <div id="btn-{gid}"
-        onclick="(function(){{
-          var f = document.getElementById('frame-{gid}');
-          var btn = document.getElementById('btn-{gid}');
-          var ic = document.getElementById('ic-{gid}');
-          if (f.style.display === 'none') {{
-            f.style.display = 'block';
-            if (!f.src) f.src = '/graph/{gid}';
-            btn.style.color = '#4f46e5';
-            ic.textContent = 'expand_less';
-          }} else {{
-            f.style.display = 'none';
-            btn.style.color = '#6366f1';
-            ic.textContent = 'account_tree';
-          }}
-        }})()"
-        style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;
-               font-size:12px; color:#6366f1; font-weight:500;
-               padding:4px 8px; border-radius:6px; border:1px solid #e0e7ff;
-               background:#f5f3ff; user-select:none; transition:all 0.15s;">
-        <i id="ic-{gid}" class="material-icons" style="font-size:15px;">account_tree</i>
-        서브그래프 보기
-      </div>
-      <iframe id="frame-{gid}" src=""
-        style="display:none; width:100%; height:440px; border:none;
-               border-radius:8px; margin-top:6px;">
-      </iframe>
-    </div>
-    '''
+def _add_subgraph_widget(graph_id: str) -> None:
+    """현재 NiceGUI 컨텍스트 안에 서브그래프 토글 위젯을 추가한다."""
+    shown = [False]
+
+    frame_container = ui.element('div').style('display:none; width:100%; margin-top:6px;')
+    with frame_container:
+        ui.html(
+            f'<iframe src="/graph/{graph_id}" '
+            f'style="width:100%;height:440px;border:none;border-radius:8px;display:block;">'
+            f'</iframe>'
+        )
+
+    def _toggle():
+        shown[0] = not shown[0]
+        if shown[0]:
+            frame_container.style('display:block; width:100%; margin-top:6px;')
+            toggle_btn.props('icon=expand_less')
+        else:
+            frame_container.style('display:none; width:100%; margin-top:6px;')
+            toggle_btn.props('icon=account_tree')
+
+    toggle_btn = (
+        ui.button('서브그래프 보기', icon='account_tree', on_click=_toggle)
+        .props('flat dense no-caps')
+        .style(
+            'color:#6366f1; font-size:12px; font-weight:500; margin-top:8px;'
+            'border:1px solid #e0e7ff; background:#f5f3ff; border-radius:6px; padding:2px 10px;'
+        )
+    )
 
 
 class _PageState:
@@ -353,7 +349,7 @@ def build_chat_page():
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
                         ui.markdown(content)
                         if graph_id:
-                            ui.html(_subgraph_html(graph_id))
+                            _add_subgraph_widget(graph_id)
 
         # ── send handler ─────────────────────────────────────────────────────────────────────────────────────────
         async def on_send_message():
@@ -470,7 +466,7 @@ def build_chat_page():
                         rag.last_retrieved_nodes, current_dataset
                     )
                     with ai_col_ref:
-                        ui.html(_subgraph_html(graph_id))
+                        _add_subgraph_widget(graph_id)
                 except Exception as e:
                     print(f"서브그래프 생성 오류: {e}")
 
