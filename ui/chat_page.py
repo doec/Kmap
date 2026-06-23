@@ -318,12 +318,21 @@ def build_chat_page():
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
                         ui.markdown(content)
                         if graph_id:
-                            with ui.expansion('서브그래프 보기', icon='account_tree').classes('w-full mt-1'):
-                                ui.html(
-                                    f'<iframe src="/graph/{graph_id}" '
-                                    f'style="width:100%;height:400px;border:none;border-radius:8px;">'
-                                    f'</iframe>'
-                                )
+                            ui.html(f'''
+                            <details style="margin-top:8px; width:100%;">
+                              <summary style="
+                                cursor:pointer; font-size:12px; color:#6366f1; font-weight:500;
+                                list-style:none; display:flex; align-items:center; gap:4px;
+                                padding:4px 0; user-select:none;">
+                                <i class="material-icons" style="font-size:16px;">account_tree</i>
+                                서브그래프 보기
+                              </summary>
+                              <iframe src="/graph/{graph_id}"
+                                style="width:100%;height:420px;border:none;border-radius:8px;
+                                       margin-top:6px;display:block;">
+                              </iframe>
+                            </details>
+                            ''')
 
         # ── send handler ─────────────────────────────────────────────────────────────────────────────────────────
         async def on_send_message():
@@ -439,12 +448,23 @@ def build_chat_page():
                     graph_id = _neo4j_viz.generate_rag_result_graph(
                         rag.last_retrieved_nodes, current_dataset
                     )
+                    print(f"서브그래프 생성: graph_id={graph_id}, nodes={len(rag.last_retrieved_nodes)}")
                     with ai_col_ref:
-                        with ui.expansion('서브그래프 보기', icon='account_tree').classes('w-full mt-1'):
-                            ui.html(
-                                f'<iframe src="/graph/{graph_id}" '
-                                f'style="width:100%;height:400px;border:none;border-radius:8px;"></iframe>'
-                            )
+                        ui.html(f'''
+                        <details style="margin-top:8px; width:100%;">
+                          <summary style="
+                            cursor:pointer; font-size:12px; color:#6366f1; font-weight:500;
+                            list-style:none; display:flex; align-items:center; gap:4px;
+                            padding:4px 0; user-select:none;">
+                            <i class="material-icons" style="font-size:16px;">account_tree</i>
+                            서브그래프 보기
+                          </summary>
+                          <iframe src="/graph/{graph_id}"
+                            style="width:100%;height:420px;border:none;border-radius:8px;
+                                   margin-top:6px;display:block;">
+                          </iframe>
+                        </details>
+                        ''')
                 except Exception as e:
                     print(f"서브그래프 생성 오류: {e}")
 
