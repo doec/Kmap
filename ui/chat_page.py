@@ -34,6 +34,41 @@ _MODE_OPTIONS = [
 ]
 
 
+def _subgraph_html(graph_id: str) -> str:
+    gid = graph_id
+    return f'''
+    <div style="margin-top:8px; width:100%;">
+      <div id="btn-{gid}"
+        onclick="(function(){{
+          var f = document.getElementById('frame-{gid}');
+          var btn = document.getElementById('btn-{gid}');
+          var ic = document.getElementById('ic-{gid}');
+          if (f.style.display === 'none') {{
+            f.style.display = 'block';
+            if (!f.src) f.src = '/graph/{gid}';
+            btn.style.color = '#4f46e5';
+            ic.textContent = 'expand_less';
+          }} else {{
+            f.style.display = 'none';
+            btn.style.color = '#6366f1';
+            ic.textContent = 'account_tree';
+          }}
+        }})()"
+        style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;
+               font-size:12px; color:#6366f1; font-weight:500;
+               padding:4px 8px; border-radius:6px; border:1px solid #e0e7ff;
+               background:#f5f3ff; user-select:none; transition:all 0.15s;">
+        <i id="ic-{gid}" class="material-icons" style="font-size:15px;">account_tree</i>
+        서브그래프 보기
+      </div>
+      <iframe id="frame-{gid}" src=""
+        style="display:none; width:100%; height:440px; border:none;
+               border-radius:8px; margin-top:6px;">
+      </iframe>
+    </div>
+    '''
+
+
 class _PageState:
     def __init__(self):
         self.dataset: str       = "All"
@@ -318,21 +353,7 @@ def build_chat_page():
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
                         ui.markdown(content)
                         if graph_id:
-                            ui.html(f'''
-                            <details style="margin-top:8px; width:100%;">
-                              <summary style="
-                                cursor:pointer; font-size:12px; color:#6366f1; font-weight:500;
-                                list-style:none; display:flex; align-items:center; gap:4px;
-                                padding:4px 0; user-select:none;">
-                                <i class="material-icons" style="font-size:16px;">account_tree</i>
-                                서브그래프 보기
-                              </summary>
-                              <iframe src="/graph/{graph_id}"
-                                style="width:100%;height:420px;border:none;border-radius:8px;
-                                       margin-top:6px;display:block;">
-                              </iframe>
-                            </details>
-                            ''')
+                            ui.html(_subgraph_html(graph_id))
 
         # ── send handler ─────────────────────────────────────────────────────────────────────────────────────────
         async def on_send_message():
@@ -448,23 +469,8 @@ def build_chat_page():
                     graph_id = _neo4j_viz.generate_rag_result_graph(
                         rag.last_retrieved_nodes, current_dataset
                     )
-                    print(f"서브그래프 생성: graph_id={graph_id}, nodes={len(rag.last_retrieved_nodes)}")
                     with ai_col_ref:
-                        ui.html(f'''
-                        <details style="margin-top:8px; width:100%;">
-                          <summary style="
-                            cursor:pointer; font-size:12px; color:#6366f1; font-weight:500;
-                            list-style:none; display:flex; align-items:center; gap:4px;
-                            padding:4px 0; user-select:none;">
-                            <i class="material-icons" style="font-size:16px;">account_tree</i>
-                            서브그래프 보기
-                          </summary>
-                          <iframe src="/graph/{graph_id}"
-                            style="width:100%;height:420px;border:none;border-radius:8px;
-                                   margin-top:6px;display:block;">
-                          </iframe>
-                        </details>
-                        ''')
+                        ui.html(_subgraph_html(graph_id))
                 except Exception as e:
                     print(f"서브그래프 생성 오류: {e}")
 
