@@ -302,7 +302,7 @@ def build_chat_page():
 
             if role == 'user':
                 chip_color = _DATASET_CHIP_COLOR.get(ds, 'grey')
-                with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px;'):
+                with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px; width:100%;'):
                     ui.badge(ds, color=chip_color).classes('text-xs')
                     with ui.element('div').classes(
                         'user-bubble rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white'
@@ -354,7 +354,7 @@ def build_chat_page():
             state.messages.append(user_msg)
 
             with chat_container:
-                with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px;'):
+                with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px; width:100%;'):
                     ui.badge(current_dataset, color=chip_color).classes('text-xs')
                     with ui.element('div').classes(
                         'user-bubble rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white'
