@@ -61,12 +61,31 @@ def build_chat_page():
         .q-page { min-height: 0 !important; height: calc(100vh - 52px) !important; padding: 0 !important; }
         .nicegui-content { padding: 0 !important; margin: 0 !important; position: absolute; inset: 0; }
         .q-scrollarea__thumb--v { opacity: 0.4 !important; width: 4px !important; border-radius: 4px !important; }
+
+        /* chat bubbles */
         .user-bubble { background: linear-gradient(135deg, #6366f1, #8b5cf6); word-break: break-word; }
-        .ai-bubble { background: #f1f5f9; overflow-x: auto; }
-        .ai-bubble p { margin: 0; }
-        .ai-bubble .q-markdown--content { color: #334155; }
+        .ai-bubble { background: #f1f5f9; overflow-x: auto; color: #334155; }
+        .ai-bubble p, .ai-bubble li, .ai-bubble td { color: #334155; margin: 0; }
+        .ai-bubble * { color: #334155; }
+        .ai-bubble code { background: #e2e8f0; color: #1e293b; padding: 1px 5px; border-radius: 4px; }
+        .ai-bubble pre { background: #e2e8f0; padding: 8px 12px; border-radius: 8px; overflow-x: auto; }
+
+        /* input field — force light mode regardless of Quasar dark setting */
+        .q-field__native, .q-field__input { color: #1e293b !important; }
+        .q-field__label { color: #64748b !important; }
+        .q-field--outlined .q-field__control { background: white !important; }
+
+        /* checkbox labels */
+        .q-checkbox__label { color: #475569 !important; font-size: 13px; }
+
+        /* messages flush to bottom */
+        .chat-messages { display: flex; flex-direction: column; justify-content: flex-end; min-height: 100%; }
+
+        /* header-input (dark header 위 입력창) */
         .header-input .q-field__control:before { border-color: rgba(255,255,255,0.15) !important; }
         .header-input .q-field__control:hover:before { border-color: rgba(255,255,255,0.3) !important; }
+
+        /* hover animations */
         .hover-btn { transition: all 0.2s ease; }
         .hover-btn:hover { transform: scale(1.05); filter: brightness(1.1); }
     </style>
@@ -170,9 +189,11 @@ def build_chat_page():
             'flex:1; overflow:hidden; display:flex; flex-direction:column; background:#f8fafc;'
         ):
 
-            scroll_area = ui.scroll_area().style('flex:1; width:100%; background:#f8fafc;')
+            scroll_area = ui.scroll_area().style(
+                'flex:1; width:100%; background:#f8fafc; display:flex; flex-direction:column;'
+            )
             with scroll_area:
-                chat_container = ui.column().classes('w-full p-5 gap-2')
+                chat_container = ui.column().classes('w-full p-5 gap-2 chat-messages')
 
                 # welcome message
                 with chat_container:

@@ -22,4 +22,4 @@ app.on_shutdown(_neo4j_viz.close)
 
 ui.page('/')(build_chat_page)
 
-ui.run(title='KMap', port=8080, reload=False, dark=True)
+ui.run(title='KMap', port=8080, reload=False, dark=False)
