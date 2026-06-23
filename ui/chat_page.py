@@ -112,7 +112,7 @@ def build_chat_page():
         .q-checkbox__label { color: #475569 !important; font-size: 13px; }
 
         /* scroll area inner content fills height so messages stay at bottom */
-        .q-scrollarea__content { min-height: 100% !important; display: flex !important; flex-direction: column !important; }
+        .q-scrollarea__content { min-height: 100% !important; width: 100% !important; display: flex !important; flex-direction: column !important; }
 
         /* header-input (dark header 위 입력창) */
         .header-input .q-field__control:before { border-color: rgba(255,255,255,0.15) !important; }
@@ -231,7 +231,7 @@ def build_chat_page():
             scroll_area = ui.scroll_area().style('flex:1; min-height:0; width:100%; background:#f8fafc;')
             with scroll_area:
                 chat_container = ui.element('div').style(
-                    'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%;'
+                    'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%; width:100%;'
                 )
                 with chat_container:
                     # spacer — pushes messages to bottom when few messages exist
