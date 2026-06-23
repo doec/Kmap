@@ -142,14 +142,15 @@ def build_chat_page():
             mode_label.bind_text_from(state, 'search_mode')
 
     # ── body ────────────────────────────────────────────────────────────────────────────────────────
-    with ui.row().classes('w-full').style('height: calc(100vh - 52px); overflow: hidden;'):
-
+    with ui.element('div').style(
+        'display:flex; flex-direction:row; width:100%; height:calc(100vh - 52px); overflow:hidden;'
+    ):
         # ── sidebar ─────────────────────────────────────────────────────────────────────────────────────
-        with ui.column().style(
-            'width:220px; min-width:220px; background:#f1f5f9; '
-            'border-right:1px solid #e2e8f0; padding:12px; gap:12px; overflow-y:auto;'
+        with ui.element('div').style(
+            'width:220px; min-width:220px; flex-shrink:0; background:#f1f5f9; '
+            'border-right:1px solid #e2e8f0; padding:12px; display:flex; flex-direction:column; gap:12px; overflow-y:auto;'
         ):
-            with ui.row().classes('w-full items-center justify-between'):
+            with ui.element('div').style('display:flex; align-items:center; justify-content:space-between;'):
                 ui.label('대화 기록').style(
                     'font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;'
                 )
@@ -157,7 +158,7 @@ def build_chat_page():
                     'hover-btn'
                 ).style('color:#64748b;').tooltip('새 대화')
 
-            conv_list = ui.column().classes('w-full gap-1')
+            conv_list = ui.element('div').style('display:flex; flex-direction:column; gap:4px; width:100%;')
 
             ui.separator().style('border-color:#e2e8f0;')
 
@@ -186,19 +187,20 @@ def build_chat_page():
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
         with ui.element('div').style(
-            'flex:1; min-width:0; overflow:hidden; display:flex; flex-direction:column; background:#f8fafc;'
+            'flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:#f8fafc;'
         ):
-            scroll_area = ui.scroll_area().style('flex:1; width:100%; background:#f8fafc;')
+            scroll_area = ui.scroll_area().style('flex:1; min-height:0; width:100%; background:#f8fafc;')
             with scroll_area:
-                # spacer pushes messages to bottom when few messages
-                ui.element('div').style('flex:1;')
-                chat_container = ui.column().classes('w-full p-5 gap-2')
-
-                # welcome message
+                chat_container = ui.element('div').style(
+                    'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%;'
+                )
                 with chat_container:
-                    with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
+                    # spacer — pushes messages to bottom when few messages exist
+                    ui.element('div').style('flex:1;')
+                    # welcome message
+                    with ui.element('div').style('display:flex; align-items:flex-start; gap:8px;').classes('ai-msg'):
                         ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                            'width:24px; height:24px; min-width:24px; font-size:12px;'
+                            'width:24px; height:24px; min-width:24px; font-size:12px; flex-shrink:0;'
                         )
                         with ui.element('div').classes(
                             'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
@@ -209,13 +211,11 @@ def build_chat_page():
                             )
 
             # ── bottom bar ─────────────────────────────────────────────────────────────────────────────
-            ui.separator().style('opacity:0.6; border-color:#e2e8f0;')
-
             with ui.element('div').style(
-                'width:100%; background:#f8fafc; border-top:1px solid #e2e8f0; padding:8px 16px; flex-shrink:0;'
+                'flex-shrink:0; background:#f8fafc; border-top:1px solid #e2e8f0; padding:8px 16px 12px;'
             ):
                 # toggles
-                with ui.row().classes('items-center gap-4').style('margin-bottom:6px;'):
+                with ui.element('div').style('display:flex; align-items:center; gap:16px; margin-bottom:6px;'):
                     hop_chk = ui.checkbox('2-hop', value=state.use_2hop).style('color:#64748b; font-size:13px;')
                     hop_chk.bind_value(state, 'use_2hop')
                     hop_chk.tooltip('2-hop 탐색 (per-session 제어는 2단계 예정)')
@@ -227,7 +227,7 @@ def build_chat_page():
                     ppr_chk.bind_value(state, 'use_papers')
 
                 # input
-                with ui.row().classes('w-full no-wrap items-end gap-2').style('padding-bottom:4px;'):
+                with ui.element('div').style('display:flex; align-items:flex-end; gap:8px; width:100%;'):
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꿈, Enter: 전송)')
                         .classes('flex-grow text-sm')
@@ -267,9 +267,10 @@ def build_chat_page():
                 state.active_conv_id = None
                 chat_container.clear()
                 with chat_container:
-                    with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
+                    ui.element('div').style('flex:1;')
+                    with ui.element('div').style('display:flex; align-items:flex-start; gap:8px;').classes('ai-msg'):
                         ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                            'width:24px; height:24px; min-width:24px; font-size:12px;'
+                            'width:24px; height:24px; min-width:24px; font-size:12px; flex-shrink:0;'
                         )
                         with ui.element('div').classes(
                             'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
@@ -297,16 +298,16 @@ def build_chat_page():
 
             if role == 'user':
                 chip_color = _DATASET_CHIP_COLOR.get(ds, 'grey')
-                with ui.column().classes('w-full items-end gap-1'):
+                with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px;'):
                     ui.badge(ds, color=chip_color).classes('text-xs')
                     with ui.element('div').classes(
                         'user-bubble rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white'
                     ).style('max-width:80%;'):
                         ui.label(content)
             else:
-                with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
+                with ui.element('div').style('display:flex; align-items:flex-start; gap:8px;').classes('ai-msg'):
                     ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                        'width:24px; height:24px; min-width:24px; font-size:12px;'
+                        'width:24px; height:24px; min-width:24px; font-size:12px; flex-shrink:0;'
                     )
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
@@ -325,6 +326,11 @@ def build_chat_page():
             query = input_box.value.strip()
             if not query:
                 return
+
+            # capture client NOW — before any await (slot context lost after first await)
+            from nicegui import context as _ctx
+            _client = _ctx.client
+
             input_box.value = ''
             send_btn.disable()
 
@@ -348,7 +354,7 @@ def build_chat_page():
             state.messages.append(user_msg)
 
             with chat_container:
-                with ui.column().classes('w-full items-end gap-1'):
+                with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px;'):
                     ui.badge(current_dataset, color=chip_color).classes('text-xs')
                     with ui.element('div').classes(
                         'user-bubble rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white'
@@ -361,16 +367,17 @@ def build_chat_page():
             ai_col_ref = None
 
             with chat_container:
-                with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
+                with ui.element('div').style(
+                    'display:flex; align-items:flex-start; gap:8px;'
+                ).classes('ai-msg'):
                     ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                        'width:24px; height:24px; min-width:24px; font-size:12px;'
+                        'width:24px; height:24px; min-width:24px; font-size:12px; flex-shrink:0;'
                     )
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
                     ).style('max-width:calc(100% - 36px); color:#334155; min-width:60px;') as ai_col_ref:
-                        with ui.element('div') as ai_bubble:
-                            spinner    = ui.spinner('dots', size='1.2em', color='indigo')
-                            md_element = ui.markdown('')
+                        spinner    = ui.spinner('dots', size='1.2em', color='indigo')
+                        md_element = ui.markdown('')
 
             await asyncio.sleep(0.05)
             scroll_area.scroll_to(percent=1.0)
@@ -378,10 +385,6 @@ def build_chat_page():
             # ── run sync generator in executor ───────────────────────────────────────────────────────────────
             loop    = asyncio.get_event_loop()
             gen     = rag.answer_stream(query, current_dataset, current_mode)
-
-            # capture client before run_in_executor (slot context lost after first await in executor)
-            from nicegui import context as _ctx
-            _client = _ctx.client
 
             spinner.delete()
             full_text    = ''
