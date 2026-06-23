@@ -379,10 +379,25 @@ def build_chat_page():
             loop    = asyncio.get_event_loop()
             gen     = rag.answer_stream(query, current_dataset, current_mode)
 
+            # capture client before run_in_executor (slot context lost after first await in executor)
+            from nicegui import context as _ctx
+            _client = _ctx.client
+
             spinner.delete()
             full_text    = ''
             chunk_buffer = ''
             chunk_count  = 0
+
+            _SCROLL_JS = """
+                var el = document.querySelector('.q-scrollarea__container');
+                if (el) {
+                    var nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+                    if (nearBottom) {
+                        var msgs = document.querySelectorAll('.ai-msg');
+                        if (msgs.length) msgs[msgs.length-1].scrollIntoView({behavior:'smooth',block:'end'});
+                    }
+                }
+            """
 
             while True:
                 chunk = await loop.run_in_executor(None, next, gen, None)
@@ -397,16 +412,7 @@ def build_chat_page():
                     full_text    += chunk_buffer
                     chunk_buffer  = ''
                     md_element.set_content(full_text + '▌')
-                    await ui.run_javascript("""
-                        var el = document.querySelector('.q-scrollarea__container');
-                        if (el) {
-                            var nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-                            if (nearBottom) {
-                                var msgs = document.querySelectorAll('.ai-msg');
-                                if (msgs.length) msgs[msgs.length-1].scrollIntoView({behavior:'smooth',block:'end'});
-                            }
-                        }
-                    """)
+                    await _client.run_javascript(_SCROLL_JS)
                     await asyncio.sleep(0)
 
             md_element.set_content(full_text)
