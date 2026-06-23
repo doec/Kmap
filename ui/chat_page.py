@@ -51,7 +51,7 @@ _MODE_OPTIONS = [
 ]
 
 
-def _add_subgraph_widget(graph_id: str) -> None:
+def _add_subgraph_widget(graph_id: str, page_client) -> None:
     """현재 NiceGUI 컨텍스트 안에 서브그래프 토글 위젯을 추가한다."""
     state = {'shown': False, 'loaded': False}
     iframe_id = f'sgframe-{graph_id}'
@@ -87,7 +87,7 @@ def _add_subgraph_widget(graph_id: str) -> None:
             state['loaded'] = True
             # 컨테이너가 화면에 반영될 시간을 잠깐 준 뒤 iframe src 주입
             await asyncio.sleep(0.05)
-            await ui.run_javascript(
+            await page_client.run_javascript(
                 f"var f=document.getElementById('{iframe_id}'); if(f) f.src='/graph/{graph_id}';"
             )
 
@@ -383,7 +383,7 @@ def build_chat_page():
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
                         ui.markdown(_linkify(content))
                         if graph_id:
-                            _add_subgraph_widget(graph_id)
+                            _add_subgraph_widget(graph_id, _page_client)
 
         # ── send handler ─────────────────────────────────────────────────────────────────────────────────────────
         async def on_send_message():
