@@ -57,29 +57,39 @@ def build_chat_page():
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <style>
         *, *::before, *::after { font-family: "Inter", sans-serif; box-sizing: border-box; }
-        body, html { margin: 0; padding: 0; overflow: hidden; background: #111827; }
+        body, html { margin: 0; padding: 0; overflow: hidden; background: #f8fafc; }
         .q-page { min-height: 0 !important; height: calc(100vh - 52px) !important; padding: 0 !important; }
         .nicegui-content { padding: 0 !important; margin: 0 !important; position: absolute; inset: 0; }
         .q-scrollarea__thumb--v { opacity: 0.4 !important; width: 4px !important; border-radius: 4px !important; }
-        .user-bubble { background: linear-gradient(135deg, #2563eb, #4f46e5); word-break: break-word; }
-        .ai-bubble { background: #1f2937; overflow-x: auto; }
+        .user-bubble { background: linear-gradient(135deg, #6366f1, #8b5cf6); word-break: break-word; }
+        .ai-bubble { background: #f1f5f9; overflow-x: auto; }
         .ai-bubble p { margin: 0; }
-        .ai-bubble .q-markdown { color: #e5e7eb; }
+        .ai-bubble .q-markdown--content { color: #334155; }
+        .header-input .q-field__control:before { border-color: rgba(255,255,255,0.15) !important; }
+        .header-input .q-field__control:hover:before { border-color: rgba(255,255,255,0.3) !important; }
+        .hover-btn { transition: all 0.2s ease; }
+        .hover-btn:hover { transform: scale(1.05); filter: brightness(1.1); }
     </style>
     ''')
 
     # ── topbar ──────────────────────────────────────────────────────────────────────────────────────
     with ui.header().style(
         'height:52px; min-height:52px; padding:0;'
-        'background:#111827; border-bottom:1px solid #374151;'
+        'background:linear-gradient(135deg,#1e1b4b 0%,#4338ca 100%);'
+        'border-bottom:1px solid rgba(255,255,255,0.08); box-shadow:0 1px 12px rgba(0,0,0,0.2);'
     ):
         with ui.element('div').style(
             'display:flex; align-items:center; width:100%; height:52px; padding:0 16px; gap:12px;'
         ):
+            ui.html('<i class="material-icons" style="font-size:20px;color:rgba(255,255,255,0.9);line-height:1;">hub</i>')
             ui.label('KMap').style(
-                'font-size:16px; font-weight:700; color:#f9fafb; letter-spacing:-0.02em; white-space:nowrap;'
+                'font-size:15px; font-weight:600; color:white; letter-spacing:-0.03em; white-space:nowrap;'
             )
-            ui.element('div').style('width:1px; height:20px; background:#374151;')
+            ui.label('SMEP-D').style(
+                'font-size:11px; font-weight:500; color:white;'
+                'padding:2px 8px; border-radius:999px; background:rgba(255,255,255,0.15); white-space:nowrap;'
+            )
+            ui.element('div').style('width:1px; height:20px; background:rgba(255,255,255,0.2);')
 
             dataset_btn_refs: dict[str, ui.button] = {}
 
@@ -87,21 +97,21 @@ def build_chat_page():
                 state.dataset = key
                 for k, btn in dataset_btn_refs.items():
                     if k == key:
-                        btn.classes(remove='text-gray-400 hover:text-white', add='bg-blue-600 text-white')
+                        btn.classes(remove='text-white/60 hover:text-white', add='bg-white/20 text-white')
                     else:
-                        btn.classes(remove='bg-blue-600 text-white', add='text-gray-400 hover:text-white')
+                        btn.classes(remove='bg-white/20 text-white', add='text-white/60 hover:text-white')
 
             for label, key in _DATASET_TABS:
                 disabled = (key == "ExperimentsDB")
                 btn = (
                     ui.button(label, on_click=lambda k=key: _on_dataset(k))
                     .props('flat dense')
-                    .classes('px-3 py-1 rounded text-sm transition-colors')
+                    .classes('px-3 py-1 rounded text-sm transition-colors hover-btn')
                 )
                 if key == "All":
-                    btn.classes('bg-blue-600 text-white')
+                    btn.classes('bg-white/20 text-white')
                 else:
-                    btn.classes('text-gray-400 hover:text-white')
+                    btn.classes('text-white/60 hover:text-white')
                 if disabled:
                     btn.disable()
                     btn.tooltip('준비 중 (Qdrant RAG 2단계)')
@@ -109,7 +119,7 @@ def build_chat_page():
 
             ui.element('div').style('flex:1;')
 
-            mode_label = ui.label('hybrid').style('font-size:11px; color:#6b7280;')
+            mode_label = ui.label('hybrid').style('font-size:11px; color:rgba(255,255,255,0.5);')
             mode_label.bind_text_from(state, 'search_mode')
 
     # ── body ────────────────────────────────────────────────────────────────────────────────────────
@@ -117,23 +127,23 @@ def build_chat_page():
 
         # ── sidebar ─────────────────────────────────────────────────────────────────────────────────────
         with ui.column().style(
-            'width:250px; min-width:250px; background:#0f172a; '
-            'border-right:1px solid #1e293b; padding:12px; gap:12px; overflow-y:auto;'
+            'width:220px; min-width:220px; background:#f1f5f9; '
+            'border-right:1px solid #e2e8f0; padding:12px; gap:12px; overflow-y:auto;'
         ):
             with ui.row().classes('w-full items-center justify-between'):
                 ui.label('대화 기록').style(
-                    'font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em;'
+                    'font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;'
                 )
-                ui.button(icon='add', on_click=lambda: _new_conversation()).props('flat round dense').style(
-                    'color:#6b7280; font-size:14px;'
-                ).tooltip('새 대화')
+                ui.button(icon='add', on_click=lambda: _new_conversation()).props('flat round dense').classes(
+                    'hover-btn'
+                ).style('color:#64748b;').tooltip('새 대화')
 
             conv_list = ui.column().classes('w-full gap-1')
 
-            ui.separator().style('border-color:#1e293b;')
+            ui.separator().style('border-color:#e2e8f0;')
 
             ui.label('검색 모드').style(
-                'font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em;'
+                'font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;'
             )
 
             mode_btns: dict[str, ui.button] = {}
@@ -142,25 +152,27 @@ def build_chat_page():
                 state.search_mode = m
                 for k, b in mode_btns.items():
                     if k == m:
-                        b.classes(remove='text-gray-400 hover:text-white', add='bg-teal-700 text-white')
+                        b.classes(remove='text-slate-500 hover:text-slate-800', add='bg-indigo-600 text-white')
                     else:
-                        b.classes(remove='bg-teal-700 text-white', add='text-gray-400 hover:text-white')
+                        b.classes(remove='bg-indigo-600 text-white', add='text-slate-500 hover:text-slate-800')
 
             for label, val in _MODE_OPTIONS:
                 b = (
                     ui.button(label, on_click=lambda v=val: _on_mode(v))
                     .props('flat dense align=left')
-                    .classes('w-full text-sm rounded px-2 py-1.5 text-left transition-colors')
+                    .classes('w-full text-sm rounded px-2 py-1.5 text-left transition-colors hover-btn')
                 )
-                b.classes('bg-teal-700 text-white' if val == state.search_mode else 'text-gray-400 hover:text-white')
+                b.classes('bg-indigo-600 text-white' if val == state.search_mode else 'text-slate-500 hover:text-slate-800')
                 mode_btns[val] = b
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
-        with ui.column().style('flex:1; overflow:hidden; display:flex; flex-direction:column;'):
+        with ui.column().style(
+            'flex:1; overflow:hidden; display:flex; flex-direction:column; background:#f8fafc;'
+        ):
 
-            scroll_area = ui.scroll_area().style('flex:1; width:100%;')
+            scroll_area = ui.scroll_area().style('flex:1; width:100%; background:#f8fafc;')
             with scroll_area:
-                chat_container = ui.column().classes('w-full p-4 gap-3')
+                chat_container = ui.column().classes('w-full p-5 gap-2')
 
                 # welcome message
                 with chat_container:
@@ -178,35 +190,38 @@ def build_chat_page():
                                 )
 
             # ── bottom bar ─────────────────────────────────────────────────────────────────────────────
+            ui.separator().style('opacity:0.6; border-color:#e2e8f0;')
+
             with ui.column().style(
-                'width:100%; background:#0f172a; border-top:1px solid #1e293b; padding:8px 16px; gap:8px; flex-shrink:0;'
+                'width:100%; background:#f8fafc; border-top:1px solid #e2e8f0; padding:8px 16px; gap:8px; flex-shrink:0;'
             ):
                 # toggles
                 with ui.row().classes('items-center gap-4'):
-                    hop_chk = ui.checkbox('2-hop', value=state.use_2hop).style('color:#9ca3af; font-size:13px;')
+                    hop_chk = ui.checkbox('2-hop', value=state.use_2hop).style('color:#64748b; font-size:13px;')
                     hop_chk.bind_value(state, 'use_2hop')
                     hop_chk.tooltip('2-hop 탐색 (per-session 제어는 2단계 예정)')
 
-                    rpt_chk = ui.checkbox('ReportsDB', value=state.use_reports).style('color:#9ca3af; font-size:13px;')
+                    rpt_chk = ui.checkbox('ReportsDB', value=state.use_reports).style('color:#64748b; font-size:13px;')
                     rpt_chk.bind_value(state, 'use_reports')
 
-                    ppr_chk = ui.checkbox('PapersDB', value=state.use_papers).style('color:#9ca3af; font-size:13px;')
+                    ppr_chk = ui.checkbox('PapersDB', value=state.use_papers).style('color:#64748b; font-size:13px;')
                     ppr_chk.bind_value(state, 'use_papers')
 
                 # input
                 with ui.row().classes('w-full items-center gap-2'):
                     input_box = (
-                        ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꾸음, Enter: 전송)')
+                        ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꿈, Enter: 전송)')
                         .classes('flex-1 rounded-xl text-sm')
-                        .style('font-size: 14px;')
-                        .props('rows=2 outlined dense dark')
+                        .style('font-size:14px;')
+                        .props('rows=2 outlined dense')
                     )
                     send_btn = (
                         ui.button(icon='arrow_upward')
                         .props('round unelevated')
+                        .classes('hover-btn')
                         .style(
-                            'background: linear-gradient(135deg, #2563eb, #4f46e5);'
-                            'color: white; min-width: 36px; min-height: 36px;'
+                            'background:linear-gradient(135deg,#6366f1,#8b5cf6);'
+                            'color:white; min-width:36px; min-height:36px;'
                         )
                     )
 
@@ -222,8 +237,8 @@ def build_chat_page():
                         ui.button(title, on_click=lambda c=conv: _load_conversation(c))
                         .props('flat dense align=left')
                         .classes(
-                            'w-full text-sm rounded px-2 py-1.5 truncate text-left ' +
-                            ('bg-gray-700 text-white' if is_active else 'text-gray-400 hover:bg-gray-800')
+                            'w-full text-sm rounded px-2 py-1.5 truncate text-left hover-btn ' +
+                            ('bg-indigo-100 text-indigo-800' if is_active else 'text-slate-500 hover:bg-slate-200')
                         )
                     )
 
