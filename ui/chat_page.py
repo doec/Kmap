@@ -501,7 +501,7 @@ def build_chat_page():
                     )
                     print(f"[subgraph] widget 생성: graph_id={graph_id}, nodes={len(rag.last_retrieved_nodes)}")
                     with ai_col_ref:
-                        _add_subgraph_widget(graph_id)
+                        _add_subgraph_widget(graph_id, _page_client)
                 except Exception as e:
                     print(f"서브그래프 생성 오류: {e}")
 
