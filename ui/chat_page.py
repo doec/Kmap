@@ -70,8 +70,6 @@ class _PageState:
         self.dataset: str       = "All"
         self.search_mode: str   = "hybrid"
         self.use_2hop: bool     = True   # TODO: wire to rag_engine when per-session hops are supported
-        self.use_reports: bool  = True
-        self.use_papers: bool   = True
         self.conversations: list[dict] = []   # {id, title, messages}
         self.active_conv_id: int | None = None
         self.messages: list[dict] = []
@@ -249,18 +247,6 @@ def build_chat_page():
             with ui.element('div').style(
                 'flex-shrink:0; background:#f8fafc; border-top:1px solid #e2e8f0; padding:8px 16px 12px;'
             ):
-                # toggles
-                with ui.element('div').style('display:flex; align-items:center; gap:16px; margin-bottom:6px;'):
-                    hop_chk = ui.checkbox('2-hop', value=state.use_2hop).style('color:#64748b; font-size:13px;')
-                    hop_chk.bind_value(state, 'use_2hop')
-                    hop_chk.tooltip('2-hop 탐색 (per-session 제어는 2단계 예정)')
-
-                    rpt_chk = ui.checkbox('ReportsDB', value=state.use_reports).style('color:#64748b; font-size:13px;')
-                    rpt_chk.bind_value(state, 'use_reports')
-
-                    ppr_chk = ui.checkbox('PapersDB', value=state.use_papers).style('color:#64748b; font-size:13px;')
-                    ppr_chk.bind_value(state, 'use_papers')
-
                 # input
                 with ui.element('div').style('display:flex; align-items:flex-end; gap:8px; width:100%;'):
                     input_box = (
