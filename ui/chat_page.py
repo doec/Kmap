@@ -36,33 +36,33 @@ _MODE_OPTIONS = [
 
 def _add_subgraph_widget(graph_id: str) -> None:
     """현재 NiceGUI 컨텍스트 안에 서브그래프 토글 위젯을 추가한다."""
-    shown = [False]
-
-    frame_container = ui.element('div').style('display:none; width:100%; margin-top:6px;')
-    with frame_container:
-        ui.html(
-            f'<iframe src="/graph/{graph_id}" '
-            f'style="width:100%;height:440px;border:none;border-radius:8px;display:block;">'
-            f'</iframe>'
-        )
-
-    def _toggle():
-        shown[0] = not shown[0]
-        if shown[0]:
-            frame_container.style('display:block; width:100%; margin-top:6px;')
-            toggle_btn.props('icon=expand_less')
-        else:
-            frame_container.style('display:none; width:100%; margin-top:6px;')
-            toggle_btn.props('icon=account_tree')
+    shown = {'value': False}
 
     toggle_btn = (
-        ui.button('서브그래프 보기', icon='account_tree', on_click=_toggle)
+        ui.button('서브그래프 보기', icon='account_tree')
         .props('flat dense no-caps')
         .style(
             'color:#6366f1; font-size:12px; font-weight:500; margin-top:8px;'
             'border:1px solid #e0e7ff; background:#f5f3ff; border-radius:6px; padding:2px 10px;'
         )
     )
+
+    frame_container = ui.element('div').style('width:100%; margin-top:6px;')
+    with frame_container:
+        ui.html(
+            f'<iframe src="/graph/{graph_id}" '
+            f'style="width:100%;height:440px;border:none;border-radius:8px;display:block;">'
+            f'</iframe>'
+        )
+    frame_container.set_visibility(False)
+
+    def _toggle():
+        shown['value'] = not shown['value']
+        print(f"[subgraph] toggle -> {shown['value']} (graph_id={graph_id})")
+        frame_container.set_visibility(shown['value'])
+        toggle_btn.props(f"icon={'expand_less' if shown['value'] else 'account_tree'}")
+
+    toggle_btn.on('click', _toggle)
 
 
 class _PageState:
@@ -457,6 +457,7 @@ def build_chat_page():
                     graph_id = _neo4j_viz.generate_rag_result_graph(
                         rag.last_retrieved_nodes, current_dataset
                     )
+                    print(f"[subgraph] widget 생성: graph_id={graph_id}, nodes={len(rag.last_retrieved_nodes)}")
                     with ai_col_ref:
                         _add_subgraph_widget(graph_id)
                 except Exception as e:
