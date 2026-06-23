@@ -262,6 +262,7 @@ class Neo4jRetriever:
         )
         return (
             '<div id="legend" style="position:fixed;bottom:16px;left:16px;'
+            'max-height:calc(100vh - 32px);display:flex;flex-direction:column;'
             'background:rgba(255,255,255,0.93);border:1px solid #e2e8f0;border-radius:8px;'
             'padding:10px 14px;box-shadow:0 2px 8px rgba(0,0,0,0.08);z-index:1000;'
             'font-family:Inter,sans-serif;">'
@@ -276,7 +277,7 @@ class Neo4jRetriever:
             '<span style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.05em;">NODE TYPE</span>'
             '<span id="legend-toggle-ic" style="font-size:12px;color:#94a3b8;line-height:1;">▾</span>'
             '</div>'
-            '<div id="legend-body" style="margin-top:7px;">' + items + '</div>'
+            '<div id="legend-body" style="margin-top:7px;overflow-y:auto;flex:1;min-height:0;">' + items + '</div>'
             '</div>'
         )
 
