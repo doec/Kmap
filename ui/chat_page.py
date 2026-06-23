@@ -50,6 +50,10 @@ def build_chat_page():
     state = _PageState()
     rag   = GraphRAG()
 
+    # capture client at page-build time — this is the only moment slot context is guaranteed
+    from nicegui import context as _ctx
+    _page_client = _ctx.client
+
     # ── global styles ─────────────────────────────────────────────────────────────────────────────────
     ui.add_head_html('''
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -327,10 +331,6 @@ def build_chat_page():
             if not query:
                 return
 
-            # capture client NOW — before any await (slot context lost after first await)
-            from nicegui import context as _ctx
-            _client = _ctx.client
-
             input_box.value = ''
             send_btn.disable()
 
@@ -415,7 +415,7 @@ def build_chat_page():
                     full_text    += chunk_buffer
                     chunk_buffer  = ''
                     md_element.set_content(full_text + '▌')
-                    await _client.run_javascript(_SCROLL_JS)
+                    await _page_client.run_javascript(_SCROLL_JS)
                     await asyncio.sleep(0)
 
             md_element.set_content(full_text)
@@ -443,10 +443,9 @@ def build_chat_page():
             scroll_area.scroll_to(percent=1.0)
             send_btn.enable()
 
+        async def _on_enter(e):
+            if not e.args.get('shiftKey'):
+                await on_send_message()
+
         send_btn.on('click', on_send_message)
-        input_box.on(
-            'keydown.enter.prevent',
-            lambda e: asyncio.ensure_future(on_send_message())
-            if not e.args.get('shiftKey')
-            else None,
-        )
+        input_box.on('keydown.enter.prevent', _on_enter)
