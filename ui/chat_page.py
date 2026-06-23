@@ -47,11 +47,14 @@ def _add_subgraph_widget(graph_id: str) -> None:
         )
     )
 
-    frame_container = ui.element('div').style('width:100%; margin-top:6px;')
+    frame_container = ui.element('div').style(
+        'width:100%; margin-top:6px; height:440px; '
+        'border:1px solid #c7d2fe; border-radius:8px; overflow:hidden; background:white;'
+    )
     with frame_container:
         ui.html(
             f'<iframe src="/graph/{graph_id}" '
-            f'style="width:100%;height:440px;border:none;border-radius:8px;display:block;">'
+            f'style="width:100%;height:100%;border:none;display:block;">'
             f'</iframe>'
         )
     frame_container.set_visibility(False)
@@ -61,6 +64,7 @@ def _add_subgraph_widget(graph_id: str) -> None:
         print(f"[subgraph] toggle -> {shown['value']} (graph_id={graph_id})")
         frame_container.set_visibility(shown['value'])
         toggle_btn.props(f"icon={'expand_less' if shown['value'] else 'account_tree'}")
+        ui.notify(f"서브그래프 {'펼침' if shown['value'] else '접힘'}", position='bottom', timeout=800)
 
     toggle_btn.on('click', _toggle)
 
