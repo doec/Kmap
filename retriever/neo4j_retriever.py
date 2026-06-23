@@ -237,7 +237,7 @@ class Neo4jRetriever:
 
     def _make_net(self) -> Network:
         net = Network(height='100vh', width='100%', bgcolor='#ffffff',
-                      font_color='black', cdn_resources='remote')
+                      font_color='black', cdn_resources='in_line')
         net.set_options("""var options = {
           "nodes": { "font": { "size": 44, "strokeWidth": 4, "strokeColor": "#ffffff" } },
           "edges": { "font": { "size": 28 }, "width": 3, "smooth": { "type": "dynamic" } },
