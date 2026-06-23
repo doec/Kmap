@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 from nicegui import ui
 
 from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, DATASETS
 from retriever.neo4j_retriever import Neo4jRetriever
+
+# ── linkify: 답변 텍스트의 맨 URL / DOI 를 마크다운 링크로 변환 ───────────────────────────────
+# 이미 마크다운 링크 형태( ](url) , <url> )인 것은 건드리지 않는다.
+_BARE_URL_RE = re.compile(r'(?<![\(\[<"\'=/])(https?://[^\s<>\)\]]+[^\s<>\)\].,;:!?\'"])')
+_DOI_RE      = re.compile(r'(?<![\w/.])(?:doi:\s*)?(10\.\d{4,9}/[^\s<>\)\]]+[^\s<>\)\].,;:!?\'"])', re.IGNORECASE)
+
+
+def _linkify(text: str) -> str:
+    """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다."""
+    if not text:
+        return text
+    text = _BARE_URL_RE.sub(lambda m: f'[{m.group(1)}]({m.group(1)})', text)
+    text = _DOI_RE.sub(
+        lambda m: f'[{m.group(0)}](https://doi.org/{m.group(1)})', text
+    )
+    return text
 
 # ── module-level singleton for graph visualization ────────────────────────────────────────────
 _neo4j_viz = Neo4jRetriever()
@@ -36,7 +53,8 @@ _MODE_OPTIONS = [
 
 def _add_subgraph_widget(graph_id: str) -> None:
     """현재 NiceGUI 컨텍스트 안에 서브그래프 토글 위젯을 추가한다."""
-    shown = {'value': False}
+    state = {'shown': False, 'loaded': False}
+    iframe_id = f'sgframe-{graph_id}'
 
     toggle_btn = (
         ui.button('서브그래프 보기', icon='account_tree')
@@ -52,19 +70,26 @@ def _add_subgraph_widget(graph_id: str) -> None:
         'border:1px solid #c7d2fe; border-radius:8px; overflow:hidden; background:white;'
     )
     with frame_container:
+        # src는 비워두고, 처음 펼칠 때 JS로 주입 (컨테이너가 보이는 상태에서 로드해야
+        # vis.js가 올바른 크기로 그래프를 렌더링함)
         ui.html(
-            f'<iframe src="/graph/{graph_id}" '
+            f'<iframe id="{iframe_id}" src="about:blank" '
             f'style="width:100%;height:100%;border:none;display:block;">'
             f'</iframe>'
         )
     frame_container.set_visibility(False)
 
-    def _toggle():
-        shown['value'] = not shown['value']
-        print(f"[subgraph] toggle -> {shown['value']} (graph_id={graph_id})")
-        frame_container.set_visibility(shown['value'])
-        toggle_btn.props(f"icon={'expand_less' if shown['value'] else 'account_tree'}")
-        ui.notify(f"서브그래프 {'펼침' if shown['value'] else '접힘'}", position='bottom', timeout=800)
+    async def _toggle():
+        state['shown'] = not state['shown']
+        frame_container.set_visibility(state['shown'])
+        toggle_btn.props(f"icon={'expand_less' if state['shown'] else 'account_tree'}")
+        if state['shown'] and not state['loaded']:
+            state['loaded'] = True
+            # 컨테이너가 화면에 반영될 시간을 잠깐 준 뒤 iframe src 주입
+            await asyncio.sleep(0.05)
+            await ui.run_javascript(
+                f"var f=document.getElementById('{iframe_id}'); if(f) f.src='/graph/{graph_id}';"
+            )
 
     toggle_btn.on('click', _toggle)
 
@@ -106,6 +131,9 @@ def build_chat_page():
         .ai-bubble * { color: #334155; }
         .ai-bubble code { background: #e2e8f0; color: #1e293b; padding: 1px 5px; border-radius: 4px; }
         .ai-bubble pre { background: #e2e8f0; padding: 8px 12px; border-radius: 8px; overflow-x: auto; }
+        /* links inside answers */
+        .ai-bubble a, .ai-bubble a * { color: #4f46e5 !important; text-decoration: underline; cursor: pointer; word-break: break-all; }
+        .ai-bubble a:hover { color: #6366f1 !important; }
 
         /* input field — force light mode regardless of Quasar dark setting */
         .q-field__native, .q-field__input { color: #1e293b !important; }
@@ -126,6 +154,16 @@ def build_chat_page():
         .hover-btn { transition: all 0.2s ease; }
         .hover-btn:hover { transform: scale(1.05); filter: brightness(1.1); }
     </style>
+    <script>
+        // 답변(.ai-bubble) 안의 링크 클릭 시 새 탭에서 열기 (이벤트 위임 — 동적 콘텐츠에도 적용)
+        document.addEventListener('click', function (e) {
+            var a = e.target.closest && e.target.closest('.ai-bubble a');
+            if (a && a.href) {
+                e.preventDefault();
+                window.open(a.href, '_blank', 'noopener,noreferrer');
+            }
+        });
+    </script>
     ''')
 
     # ── topbar ──────────────────────────────────────────────────────────────────────────────────────
@@ -343,7 +381,7 @@ def build_chat_page():
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
-                        ui.markdown(content)
+                        ui.markdown(_linkify(content))
                         if graph_id:
                             _add_subgraph_widget(graph_id)
 
@@ -452,7 +490,7 @@ def build_chat_page():
                 with ai_col_ref:
                     md_element = ui.markdown('(응답을 받지 못했습니다)')
             else:
-                md_element.set_content(full_text)
+                md_element.set_content(_linkify(full_text))
 
             # ── subgraph toggle ───────────────────────────────────────────────────────────────────────────────────
             graph_id = None
