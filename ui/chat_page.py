@@ -376,8 +376,7 @@ def build_chat_page():
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
                     ).style('max-width:calc(100% - 36px); color:#334155; min-width:60px;') as ai_col_ref:
-                        spinner    = ui.spinner('dots', size='1.2em', color='indigo')
-                        md_element = ui.markdown('')
+                        spinner = ui.spinner('dots', size='1.2em', color='indigo')
 
             await asyncio.sleep(0.05)
             scroll_area.scroll_to(percent=1.0)
@@ -386,10 +385,10 @@ def build_chat_page():
             loop    = asyncio.get_event_loop()
             gen     = rag.answer_stream(query, current_dataset, current_mode)
 
-            spinner.delete()
             full_text    = ''
             chunk_buffer = ''
             chunk_count  = 0
+            md_element   = None
 
             _SCROLL_JS = """
                 var el = document.querySelector('.q-scrollarea__container');
@@ -406,9 +405,17 @@ def build_chat_page():
                 chunk = await loop.run_in_executor(None, next, gen, None)
                 if chunk is None:
                     if chunk_buffer:
-                        full_text    += chunk_buffer
-                        md_element.set_content(full_text)
+                        full_text += chunk_buffer
+                        if md_element:
+                            md_element.set_content(full_text)
                     break
+
+                # first chunk: replace spinner with markdown element
+                if md_element is None:
+                    spinner.delete()
+                    with ai_col_ref:
+                        md_element = ui.markdown('')
+
                 chunk_buffer += chunk
                 chunk_count  += 1
                 if chunk_count % 5 == 0:
@@ -418,7 +425,12 @@ def build_chat_page():
                     await _page_client.run_javascript(_SCROLL_JS)
                     await asyncio.sleep(0)
 
-            md_element.set_content(full_text)
+            if md_element is None:
+                spinner.delete()
+                with ai_col_ref:
+                    md_element = ui.markdown('(응답을 받지 못했습니다)')
+            else:
+                md_element.set_content(full_text)
 
             # ── subgraph toggle ───────────────────────────────────────────────────────────────────────────────────
             graph_id = None
