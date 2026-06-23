@@ -28,9 +28,9 @@ _DATASET_TABS = [
 
 # ── search mode options ───────────────────────────────────────────────────────────────────────────────────
 _MODE_OPTIONS = [
-    ("Hybrid",  "hybrid"),
-    ("Dense",   "vector"),
-    ("Graph",   "text"),
+    ("Hybrid", "hybrid"),
+    ("Vector", "vector"),
+    ("Text",   "text"),
 ]
 
 
