@@ -442,8 +442,8 @@ def build_chat_page():
 
         send_btn.on('click', on_send_message)
         input_box.on(
-            'keydown',
+            'keydown.enter.prevent',
             lambda e: asyncio.ensure_future(on_send_message())
-            if (e.args.get('key') == 'Enter' and not e.args.get('shiftKey'))
+            if not e.args.get('shiftKey')
             else None,
         )
