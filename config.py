@@ -1,10 +1,8 @@
-DEFAULT_SEARCH_MODE = "hybrid"  # "hybrid" | "dense" | "graph"
-DEFAULT_SEARCH_HOPS = 1         # 1 or 2
+# UI defaults — actual search config lives in rag_engine.py (DATASETS dict)
+# These are read by the UI layer only.
 
-QDRANT_URL = "http://localhost:6333"
-NEO4J_URL = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "password"
+DEFAULT_SEARCH_MODE = "hybrid"   # "hybrid" | "vector" | "text"
+DEFAULT_SEARCH_HOPS = 2          # 1 or 2
 
-LLM_MODEL = "gpt-oss-120b"
-EMBEDDING_MODEL = "bge-m3"
+# TODO: load allow_2hop per-relation from pipelines/papers/ontology.json at runtime
+# ONTOLOGY_PATH = "pipelines/papers/ontology.json"
