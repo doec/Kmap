@@ -78,8 +78,8 @@ def build_chat_page():
         /* checkbox labels */
         .q-checkbox__label { color: #475569 !important; font-size: 13px; }
 
-        /* messages flush to bottom */
-        .chat-messages { display: flex; flex-direction: column; justify-content: flex-end; min-height: 100%; }
+        /* scroll area inner content fills height so messages stay at bottom */
+        .q-scrollarea__content { min-height: 100% !important; display: flex !important; flex-direction: column !important; }
 
         /* header-input (dark header 위 입력창) */
         .header-input .q-field__control:before { border-color: rgba(255,255,255,0.15) !important; }
@@ -185,39 +185,37 @@ def build_chat_page():
                 mode_btns[val] = b
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
-        with ui.column().style(
-            'flex:1; overflow:hidden; display:flex; flex-direction:column; background:#f8fafc;'
+        with ui.element('div').style(
+            'flex:1; min-width:0; overflow:hidden; display:flex; flex-direction:column; background:#f8fafc;'
         ):
-
-            scroll_area = ui.scroll_area().style(
-                'flex:1; width:100%; background:#f8fafc; display:flex; flex-direction:column;'
-            )
+            scroll_area = ui.scroll_area().style('flex:1; width:100%; background:#f8fafc;')
             with scroll_area:
-                chat_container = ui.column().classes('w-full p-5 gap-2 chat-messages')
+                # spacer pushes messages to bottom when few messages
+                ui.element('div').style('flex:1;')
+                chat_container = ui.column().classes('w-full p-5 gap-2')
 
                 # welcome message
                 with chat_container:
                     with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
                         ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                            'width:28px; height:28px; min-width:28px; font-size:14px;'
+                            'width:24px; height:24px; min-width:24px; font-size:12px;'
                         )
-                        with ui.column().classes('gap-0.5').style('max-width: 100%; min-width: 0;'):
-                            with ui.element('div').classes(
-                                'ai-bubble rounded-2xl rounded-tl-sm px-4 py-3 text-sm'
-                            ):
-                                ui.markdown(
-                                    "안녕하세요! **KMap 연구 어시스턴트**입니다.  \n"
-                                    "GraphRAG (Neo4j KG) 기반으로 논문 및 주간보고 데이터를 검색합니다."
-                                )
+                        with ui.element('div').classes(
+                            'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
+                        ).style('color:#334155;'):
+                            ui.markdown(
+                                "안녕하세요! **KMap 연구 어시스턴트**입니다.  \n"
+                                "논문·주간보고 데이터를 GraphRAG로 검색합니다. 무엇이든 질문해보세요!"
+                            )
 
             # ── bottom bar ─────────────────────────────────────────────────────────────────────────────
             ui.separator().style('opacity:0.6; border-color:#e2e8f0;')
 
-            with ui.column().style(
-                'width:100%; background:#f8fafc; border-top:1px solid #e2e8f0; padding:8px 16px; gap:8px; flex-shrink:0;'
+            with ui.element('div').style(
+                'width:100%; background:#f8fafc; border-top:1px solid #e2e8f0; padding:8px 16px; flex-shrink:0;'
             ):
                 # toggles
-                with ui.row().classes('items-center gap-4'):
+                with ui.row().classes('items-center gap-4').style('margin-bottom:6px;'):
                     hop_chk = ui.checkbox('2-hop', value=state.use_2hop).style('color:#64748b; font-size:13px;')
                     hop_chk.bind_value(state, 'use_2hop')
                     hop_chk.tooltip('2-hop 탐색 (per-session 제어는 2단계 예정)')
@@ -229,7 +227,7 @@ def build_chat_page():
                     ppr_chk.bind_value(state, 'use_papers')
 
                 # input
-                with ui.row().classes('w-full no-wrap items-end px-0 py-1 flex-shrink-0 gap-2'):
+                with ui.row().classes('w-full no-wrap items-end gap-2').style('padding-bottom:4px;'):
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꿈, Enter: 전송)')
                         .classes('flex-grow text-sm')
@@ -271,11 +269,12 @@ def build_chat_page():
                 with chat_container:
                     with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
                         ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                            'width:28px; height:28px; min-width:28px; font-size:14px;'
+                            'width:24px; height:24px; min-width:24px; font-size:12px;'
                         )
-                        with ui.column().classes('gap-0.5').style('max-width: 100%; min-width: 0;'):
-                            with ui.element('div').classes('ai-bubble rounded-2xl rounded-tl-sm px-4 py-3 text-sm'):
-                                ui.markdown("새 대화를 시작합니다.")
+                        with ui.element('div').classes(
+                            'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
+                        ).style('color:#334155;'):
+                            ui.markdown("새 대화를 시작합니다. 무엇이든 질문해보세요!")
                 rag.clear_history()
                 _refresh_conv_list()
 
@@ -307,11 +306,12 @@ def build_chat_page():
             else:
                 with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
                     ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                        'width:28px; height:28px; min-width:28px; font-size:14px;'
+                        'width:24px; height:24px; min-width:24px; font-size:12px;'
                     )
-                    with ui.column().classes('gap-0.5').style('max-width: 100%; min-width: 0;'):
-                        with ui.element('div').classes('ai-bubble rounded-2xl rounded-tl-sm px-4 py-3 text-sm'):
-                            ui.markdown(content)
+                    with ui.element('div').classes(
+                        'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
+                    ).style('max-width:calc(100% - 36px); color:#334155;'):
+                        ui.markdown(content)
                         if graph_id:
                             with ui.expansion('서브그래프 보기', icon='account_tree').classes('w-full mt-1'):
                                 ui.html(
@@ -363,12 +363,12 @@ def build_chat_page():
             with chat_container:
                 with ui.row().classes('w-full justify-start items-start gap-2 ai-msg'):
                     ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                        'width:28px; height:28px; min-width:28px; font-size:14px;'
+                        'width:24px; height:24px; min-width:24px; font-size:12px;'
                     )
-                    with ui.column().classes('gap-0.5').style('max-width: 100%; min-width: 0;') as ai_col_ref:
-                        with ui.element('div').classes(
-                            'ai-bubble rounded-2xl rounded-tl-sm px-4 py-3 text-sm'
-                        ) as ai_bubble:
+                    with ui.element('div').classes(
+                        'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
+                    ).style('max-width:calc(100% - 36px); color:#334155; min-width:60px;') as ai_col_ref:
+                        with ui.element('div') as ai_bubble:
                             spinner    = ui.spinner('dots', size='1.2em', color='indigo')
                             md_element = ui.markdown('')
 
