@@ -275,9 +275,9 @@ class Neo4jRetriever:
                 'ic.textContent=collapsed?\'▴\':\'▾\';'
             '})()">' 
             '<span style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.05em;">NODE TYPE</span>'
-            '<span id="legend-toggle-ic" style="font-size:12px;color:#94a3b8;line-height:1;">▾</span>'
+            '<span id="legend-toggle-ic" style="font-size:12px;color:#94a3b8;line-height:1;">▴</span>'
             '</div>'
-            '<div id="legend-body" style="margin-top:7px;overflow-y:auto;flex:1;min-height:0;">' + items + '</div>'
+            '<div id="legend-body" style="margin-top:7px;overflow-y:auto;flex:1;min-height:0;display:none;">' + items + '</div>'
             '</div>'
         )
 

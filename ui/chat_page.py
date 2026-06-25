@@ -512,4 +512,17 @@ def build_chat_page():
                 await on_send_message()
 
         send_btn.on('click', on_send_message)
-        input_box.on('keydown.enter.prevent', _on_enter)
+        # keydown.enter 만 등록 (prevent 없이) — JS에서 Shift 여부에 따라 선택적으로 preventDefault
+        input_box.on('keydown.enter', _on_enter)
+        ui.run_javascript("""
+(function() {
+    function patchEnter() {
+        var el = document.querySelector('.q-field__native, textarea');
+        if (!el) { setTimeout(patchEnter, 200); return; }
+        el.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); }
+        }, true);
+    }
+    patchEnter();
+})();
+""")
