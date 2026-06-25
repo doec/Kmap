@@ -120,7 +120,7 @@ def build_chat_page():
         .q-scrollarea__thumb--v { opacity: 0.4 !important; width: 4px !important; border-radius: 4px !important; }
 
         /* chat bubbles */
-        .user-bubble { background: linear-gradient(135deg, #6366f1, #8b5cf6); word-break: break-word; }
+        .user-bubble { background: linear-gradient(135deg, #6366f1, #8b5cf6); word-break: break-word; white-space: pre-wrap; }
         .ai-bubble { background: #f1f5f9; overflow-x: auto; color: #334155; }
         .ai-bubble p, .ai-bubble li, .ai-bubble td { color: #334155; margin: 0; }
         .ai-bubble * { color: #334155; }
