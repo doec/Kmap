@@ -477,7 +477,7 @@ def build_chat_page():
                     full_text    += chunk_buffer
                     chunk_buffer  = ''
                     md_element.set_content(full_text + '▌')
-                    await _page_client.run_javascript(_SCROLL_JS)
+                    _page_client.run_javascript(_SCROLL_JS, respond=False)
                     await asyncio.sleep(0)
 
             if md_element is None:
