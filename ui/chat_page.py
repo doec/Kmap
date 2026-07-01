@@ -252,16 +252,18 @@ def build_chat_page():
                         ui.button(label, on_click=lambda v=val: _on_mode(v))
                         .props('flat dense no-caps')
                         .classes('flex-1 rounded transition-colors hover-btn')
-                        .style('font-size:10px; padding:2px 0; min-height:0;')
+                        .style('font-size:12px; padding:4px 0; min-height:0;')
                     )
                     b.classes('bg-indigo-600 text-white' if val == state.search_mode else 'text-slate-500 hover:text-slate-800')
                     mode_btns[val] = b
 
-            ui.separator().style('border-color:#e2e8f0;')
-
-            hop_chk = ui.checkbox('2-hop 탐색', value=state.use_2hop).style('color:#64748b; font-size:13px;')
+            hop_chk = ui.checkbox('2-hop 탐색', value=state.use_2hop).props('dense').style(
+                'color:#64748b; font-size:12px; margin-top:2px;'
+            )
             hop_chk.bind_value(state, 'use_2hop')
             hop_chk.tooltip('2-hop: 검색된 노드의 이웃 노드까지 확장 탐색')
+
+            ui.separator().style('border-color:#e2e8f0;')
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
         with ui.element('div').style(
