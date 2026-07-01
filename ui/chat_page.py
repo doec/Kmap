@@ -246,14 +246,16 @@ def build_chat_page():
                     else:
                         b.classes(remove='bg-indigo-600 text-white', add='text-slate-500 hover:text-slate-800')
 
-            for label, val in _MODE_OPTIONS:
-                b = (
-                    ui.button(label, on_click=lambda v=val: _on_mode(v))
-                    .props('flat dense align=left')
-                    .classes('w-full text-sm rounded px-2 py-1.5 text-left transition-colors hover-btn')
-                )
-                b.classes('bg-indigo-600 text-white' if val == state.search_mode else 'text-slate-500 hover:text-slate-800')
-                mode_btns[val] = b
+            with ui.element('div').style('display:flex; flex-direction:row; gap:4px; width:100%;'):
+                for label, val in _MODE_OPTIONS:
+                    b = (
+                        ui.button(label, on_click=lambda v=val: _on_mode(v))
+                        .props('flat dense no-caps')
+                        .classes('flex-1 rounded transition-colors hover-btn')
+                        .style('font-size:10px; padding:2px 0; min-height:0;')
+                    )
+                    b.classes('bg-indigo-600 text-white' if val == state.search_mode else 'text-slate-500 hover:text-slate-800')
+                    mode_btns[val] = b
 
             ui.separator().style('border-color:#e2e8f0;')
 
