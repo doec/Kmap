@@ -36,6 +36,11 @@ DEFAULT_SEARCH_MODE  = None   # None / 'text' / 'vector' / 'hybrid'
 RRF_K             = 60
 MAX_HISTORY_TURNS = 5
 
+# 문서 섹션 관련 상수
+DOC_SEARCH_LIMIT  = 5     # 문서 단위 벡터 검색으로 가져올 문서 개수 (B 기능)
+DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷
+DOC_BODY_MAXLEN   = 700   # 답변 컨텍스트에 넣을 문서 본문(abstract/content) 최대 길이
+
 # ────────────────────────────────────────────────────────────────────────────
 # 데이터셋별 검색 설정
 # ────────────────────────────────────────────────────────────────────────────
@@ -82,6 +87,10 @@ DATASETS: dict = {
         'meta_label':     'Document',                    # ★ 벡터 검색에서 제외할 메타 노드
         'default_mode':   'hybrid',
         'search_hops':    None,
+        # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
+        'doc_vector_index': 'reportsdb_doc_embedding',   # Document 노드(content 기반) 벡터 인덱스
+        'doc_label':        'Document',                  # 메타 노드 레이블
+        'doc_body_field':   'content',                   # 본문 속성명 (보고서 전문)
     },
     PAPERS_DATASET: {
         'description':    PAPERS_DESC,
@@ -102,6 +111,10 @@ DATASETS: dict = {
         'meta_label':     'Paper',
         'default_mode':   'hybrid',
         'search_hops':    None,
+        # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
+        'doc_vector_index': 'paper_abstract_embedding',  # Paper 노드(abstract 기반) 벡터 인덱스
+        'doc_label':        'Paper',                     # 메타 노드 레이블
+        'doc_body_field':   'abstract',                  # 본문 속성명 (논문 초록)
     },
 }
 
@@ -202,6 +215,10 @@ class GraphRAG:
             "s.name AS sname", "s.type AS stype",
             "type(r) AS rel",
             "o.name AS oname", "o.type AS otype",
+            # ★ A 기능: 각 트리플이 어느 문서(doc_id)에서 나왔는지 항상 가져온다.
+            #   이 doc_id 로 나중에 Paper/Document 메타 노드를 조인해 원문을 붙인다.
+            #   (return_fields 에는 없으므로 트리플 줄에는 출력되지 않고, 내부 수집용으로만 쓰임)
+            "CASE WHEN r.doc_id IS NOT NULL THEN r.doc_id ELSE '' END AS doc_id",
         ]
         fields = [
             f"CASE WHEN r.{f} IS NOT NULL THEN r.{f} ELSE '' END AS {f}"
@@ -340,6 +357,7 @@ class GraphRAG:
                    type(r) AS rel,
                    o.name AS oname, o.type AS otype,
                    vec_score,
+                   CASE WHEN r.doc_id IS NOT NULL THEN r.doc_id ELSE '' END AS doc_id,
                    {field_returns}
             ORDER BY vec_score DESC
             LIMIT $limit
@@ -380,6 +398,108 @@ class GraphRAG:
         print(f"[Debug] {dataset} 2-hop: 1차 {len(hop1_rows)}개 + "
               f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(seen), limit)}개")
         return list(seen.values())[:limit]
+
+    # ── B 기능: 문서 단위 벡터 검색 ────────────────────────────────────────────
+    def _doc_vector_retrieve(self, query_text: str, cfg: dict,
+                             limit: int = DOC_SEARCH_LIMIT) -> list[str]:
+        """
+        Paper/Document 메타 노드를 대상으로 벡터 검색을 수행해 관련 문서의
+        doc_id 목록을 돌려준다.
+
+        엔티티 벡터 검색(_vector_retrieve_raw)이 "관계(트리플)"를 찾는 것과 달리,
+        이건 "문서 자체"(논문 초록 / 보고서 전문)를 질문과의 유사도로 찾는다.
+        → "이 주제 관련 논문/보고서 찾아줘" 류의 질의에 강하다.
+
+        paper_abstract_embedding / reportsdb_doc_embedding 인덱스는 각각
+        Paper / Document 노드만 포함하므로 메타 노드 제외 필터가 필요 없다.
+        """
+        doc_index = cfg.get('doc_vector_index')
+        if not doc_index:
+            return []
+
+        q_emb = get_embedding(query_text)
+        query_str = """
+            CALL db.index.vector.queryNodes($index, $limit, $q_emb)
+            YIELD node, score
+            WHERE score > $score_min
+            RETURN node.doc_id AS doc_id, score
+            ORDER BY score DESC
+        """
+        params = {
+            'index':     doc_index,
+            'limit':     limit,
+            'q_emb':     q_emb,
+            'score_min': DOC_SCORE_MIN,
+        }
+        try:
+            with self.driver.session() as session:
+                rows = [dict(r) for r in session.run(query_str, **params)]
+            return [r['doc_id'] for r in rows if r.get('doc_id')]
+        except Exception as e:
+            print(f"[Debug] 문서 벡터 검색 실패: {e}")
+            return []
+
+    # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
+    def _fetch_documents(self, doc_ids: set[str], cfg: dict) -> str:
+        """
+        doc_id 집합을 받아 Paper/Document 메타 노드에서 제목·본문·출처를 조회하고,
+        LLM 컨텍스트에 넣을 "관련 문서" 섹션 문자열로 만든다.
+
+        트리플은 (주어)-[관계]->(목적어) 형태라 근거 문장(evidence) 정도만 담지만,
+        여기서 원문(논문 초록 / 보고서 전문)을 붙여 주면 답변 근거가 훨씬 풍부해진다.
+        본문은 DOC_BODY_MAXLEN 로 잘라 컨텍스트 폭주를 막는다.
+        """
+        doc_ids = {d for d in doc_ids if d}
+        if not doc_ids or not self.driver:
+            return ""
+
+        doc_label  = cfg.get('doc_label')
+        body_field = cfg.get('doc_body_field')
+        if not doc_label or not body_field:
+            return ""
+
+        # doc_label 로 메타 노드를 특정하고, 본문 속성명은 데이터셋마다 다르므로
+        # 쿼리 문자열에 직접 끼워넣는다(값이 아니라 스키마라 파라미터화 불가).
+        query_str = f"""
+            MATCH (m:{doc_label})
+            WHERE m.doc_id IN $ids
+            RETURN m.doc_id     AS doc_id,
+                   m.title      AS title,
+                   m.author     AS author,
+                   m.date       AS date,
+                   m.source_url AS source_url,
+                   m.{body_field} AS body
+        """
+        try:
+            with self.driver.session() as session:
+                docs = [dict(r) for r in session.run(query_str, ids=list(doc_ids))]
+        except Exception as e:
+            print(f"[Debug] 문서 조회 실패: {e}")
+            return ""
+
+        if not docs:
+            return ""
+
+        lines = ["[관련 문서 원문]"]
+        for d in docs:
+            body = (d.get('body') or '').strip().replace('\n', ' ')
+            if len(body) > DOC_BODY_MAXLEN:
+                body = body[:DOC_BODY_MAXLEN] + " …(생략)"
+
+            header = f"- {d.get('title') or d.get('doc_id')}"
+            meta_bits = [b for b in (d.get('author'), d.get('date')) if b]
+            if meta_bits:
+                header += f" ({', '.join(meta_bits)})"
+            lines.append(header)
+            if d.get('source_url'):
+                lines.append(f"  출처: {d['source_url']}")
+            if body:
+                lines.append(f"  내용: {body}")
+        return "\n".join(lines)
+
+    def _collect_doc_ids(self, rows: list[dict]) -> set[str]:
+        """트리플 검색 결과 rows 에서 출처 doc_id 들을 모은다 (A 기능용)."""
+        return {r['doc_id'] for r in rows if r.get('doc_id')}
 
     def retrieve(self, keywords_str: str, query_text: str,
                  dataset: str, mode: str = None,
@@ -438,7 +558,29 @@ class GraphRAG:
             sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)[:limit]
             rows = [all_rows[k] for k in sorted_keys]
 
-        return self._format_rows(rows, cfg['return_fields'])
+        # ── 트리플 컨텍스트 ─────────────────────────────────────────────────────
+        triples_ctx = self._format_rows(rows, cfg['return_fields'])
+
+        # ── 문서 컨텍스트 (A + B) ───────────────────────────────────────────────
+        # 문서 doc_id 후보 = 트리플에서 나온 출처 doc_id (A)
+        #                  ∪ 문서 벡터 검색으로 찾은 관련 문서 doc_id (B, vector/hybrid 모드)
+        doc_ids = self._collect_doc_ids(rows)                    # A
+        if search_mode in ('vector', 'hybrid'):
+            doc_ids |= set(self._doc_vector_retrieve(query_text, cfg))  # B
+
+        docs_ctx = self._fetch_documents(doc_ids, cfg)
+
+        # ── 트리플/문서 컨텍스트 결합 ────────────────────────────────────────────
+        # 둘 다 비면 _NO_RESULT. 하나라도 있으면 해당 섹션만 이어붙인다.
+        parts = []
+        if triples_ctx != _NO_RESULT:
+            parts.append("[지식 트리플]\n" + triples_ctx)
+        if docs_ctx:
+            parts.append(docs_ctx)
+
+        if not parts:
+            return _NO_RESULT
+        return "\n\n".join(parts)
 
     def answer_stream(self, query: str, dataset: str = None, mode: str = None):
         self._pending_nodes = set()
