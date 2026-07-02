@@ -36,23 +36,56 @@ DEFAULT_SEARCH_MODE  = None   # None / 'text' / 'vector' / 'hybrid'
 RRF_K             = 60
 MAX_HISTORY_TURNS = 5
 
+# ────────────────────────────────────────────────────────────────────────────
+# 데이터셋별 검색 설정
+# ────────────────────────────────────────────────────────────────────────────
+# 각 데이터셋(ReportsDB / PapersDB)마다 검색 방식이 조금씩 다르므로,
+# 쿼리 생성에 필요한 모든 파라미터를 이 dict 하나에 모아둔다.
+# 여기 값만 바꾸면 Cypher 쿼리 코드를 건드리지 않고 검색 동작을 조정할 수 있다.
+#
+# 각 필드 의미:
+#   description    : LLM 프롬프트에 넣는 데이터셋 설명
+#   node_types     : 해당 데이터셋의 엔티티 타입 목록 (Neo4j 첫 번째 레이블).
+#                    LLM 프롬프트에만 쓰이며 검색 로직에는 영향 없음.
+#   sort_field/order: text 검색 결과 정렬 기준 (관계 속성 r.confidence 등)
+#   return_fields  : 관계(r)에서 꺼내와 답변 컨텍스트에 넣을 속성들.
+#                    → 새 스키마에서 ReportsDB 관계에도 source_url/title/author 가
+#                      추가되었으므로 여기에 포함시켜 답변에서 출처를 인용할 수 있게 함.
+#   search_fields  : text(키워드) 검색 시 CONTAINS 로 훑을 필드들
+#   has_date       : r.date 로 날짜 필터를 걸 수 있는지
+#   min_confidence : r.confidence 하한 (논문은 노이즈가 많아 0.6 컷)
+#   vector_index   : 이 데이터셋 "엔티티 노드"용 벡터 인덱스 이름.
+#                    ★ 스키마 변경: ReportsDB 엔티티 인덱스가
+#                       'reportsdb_embedding' → 'reportsdb_entity_embedding' 로 바뀜.
+#   meta_label     : ★ 신규. 같은 데이터셋 레이블(:ReportsDB)을 공유하지만
+#                    엔티티가 아닌 "메타 노드"의 레이블.
+#                    ReportsDB 엔티티 벡터 인덱스에는 Document 메타 노드도 섞여
+#                    들어오므로, 벡터 검색 결과에서 이 레이블을 가진 노드를
+#                    'WHERE NOT node:<meta_label>' 로 걸러내야 한다.
+#   default_mode   : 사용자가 모드를 지정하지 않았을 때 기본 검색 모드
+#   search_hops    : 그래프 확장 hop 수 (None 이면 전역 기본값 사용)
 DATASETS: dict = {
     REPORTS_DATASET: {
         'description':    REPORTS_DESC,
-        'node_types':     'Stack, Electrode, Dielectric, Process, Performance, '
-                          'InsertionLayer, InterfacialLayer, Measurement, Property',
+        # 새 스키마의 ReportsDB 엔티티 타입 11종
+        'node_types':     'Dielectric, Electrode, InterfacialLayer, InsertionLayer, '
+                          'Stack_MIM, Stack_Top, Stack_Bot, Measurement, '
+                          'Performance, Process, Dopant',
         'sort_field':     'confidence',
         'sort_order':     'DESC',
-        'return_fields':  ['evidence', 'confidence', 'date'],
-        'search_fields':  ['s.name', 'o.name', 'r.evidence'],
+        # ★ ReportsDB 관계에 source_url/title/author 가 추가되어 답변 출처 인용 가능
+        'return_fields':  ['evidence', 'confidence', 'source_url', 'title', 'author', 'date'],
+        'search_fields':  ['s.name', 'o.name', 'r.evidence', 'r.title', 'r.author'],
         'has_date':       True,
         'min_confidence': None,
-        'vector_index':   'reportsdb_embedding',
+        'vector_index':   'reportsdb_entity_embedding',  # ★ 이름 변경됨
+        'meta_label':     'Document',                    # ★ 벡터 검색에서 제외할 메타 노드
         'default_mode':   'hybrid',
         'search_hops':    None,
     },
     PAPERS_DATASET: {
         'description':    PAPERS_DESC,
+        # 새 스키마의 PapersDB 엔티티 타입 15종
         'node_types':     'Problem, Cause, Mechanism, Solution, ProcessApproach, '
                           'Phenomenon, Constraint, Material, Dopant, Process, '
                           'ProcessCondition, Phase, Property, Performance, Device',
@@ -63,12 +96,24 @@ DATASETS: dict = {
         'has_date':       True,
         'min_confidence': 0.6,
         'vector_index':   'papersdb_embedding',
+        # papersdb_embedding 은 n.embedding 을 인덱싱하는데, Paper 메타 노드는
+        # n.abstract_embedding(다른 속성)을 쓰므로 이 인덱스에 애초에 포함되지 않는다.
+        # 그래도 방어적으로 필터를 걸어 안전하게 처리한다.
+        'meta_label':     'Paper',
         'default_mode':   'hybrid',
         'search_hops':    None,
     },
 }
 
 _NO_RESULT = "관련 트리플을 찾지 못했습니다."
+
+# ★ 스키마 변경 대응: 구조(출처) 관계 타입.
+# 새 스키마는 엔티티와 메타 노드를 (entity)-[:FROM_PAPER]->(:Paper) /
+# (entity)-[:FROM_DOC]->(:Document) 로 연결한다. 그런데 Paper/Document 메타 노드도
+# 데이터셋 레이블(:PapersDB / :ReportsDB)을 공유하므로,
+# MATCH (s:PapersDB)-[r]->(o:PapersDB) 같은 패턴이 이 구조 관계까지 잡아버린다.
+# 이들은 "의미 트리플"이 아니라 출처 연결이므로, 검색 시 관계 타입으로 제외한다.
+_STRUCTURAL_RELS = ['FROM_PAPER', 'FROM_DOC']
 
 
 class GraphRAG:
@@ -220,10 +265,13 @@ class GraphRAG:
         return_clause = self._build_return_clause(return_fields)
         where_parts, params = self._build_where(cfg, keywords, date_from, date_to)
         params['limit'] = limit
+        # ★ 출처(구조) 관계 제외: FROM_PAPER / FROM_DOC 는 의미 트리플이 아님
+        params['struct_rels'] = _STRUCTURAL_RELS
 
         query_str = f"""
             MATCH (s:{dataset})-[r]->(o:{dataset})
-            WHERE {" AND ".join(where_parts)}
+            WHERE NOT type(r) IN $struct_rels
+              AND {" AND ".join(where_parts)}
             RETURN {return_clause}
             ORDER BY {cfg['sort_field']} {cfg['sort_order']}
             LIMIT $limit
@@ -240,9 +288,14 @@ class GraphRAG:
         return_fields  = cfg['return_fields']
         min_confidence = cfg.get('min_confidence', None)
         has_date       = cfg.get('has_date', False)
+        meta_label     = cfg.get('meta_label')   # ★ 벡터 인덱스에 섞인 메타 노드 레이블
 
+        # 1) 질문 텍스트를 임베딩(1024차원 벡터)으로 변환
         q_emb = get_embedding(query_text)
 
+        # 2) 벡터 검색 후 추가로 적용할 필터 조건들을 모은다.
+        #    filter_parts 는 관계(r) 속성에 대한 조건이고,
+        #    node_filter 는 벡터 검색으로 나온 노드(s) 자체에 대한 조건이다.
         filter_parts = []
         params: dict = {'q_emb': q_emb, 'limit': limit}
 
@@ -258,16 +311,31 @@ class GraphRAG:
 
         filter_clause = f"AND {' AND '.join(filter_parts)}" if filter_parts else ""
 
+        # ★ 스키마 변경 대응:
+        #   reportsdb_entity_embedding 인덱스는 FOR (n:ReportsDB) 로 생성되는데,
+        #   Document 메타 노드도 :ReportsDB 레이블 + embedding 속성을 가지므로
+        #   이 인덱스에 함께 포함된다. 따라서 벡터 검색 결과에서 메타 노드를
+        #   'WHERE NOT s:Document' 로 제외해야 엔티티만 남는다.
+        #   (PapersDB 는 메타 노드가 다른 속성명을 써서 애초에 안 섞이지만,
+        #    일관성/안전을 위해 동일하게 필터를 건다.)
+        node_filter = f"AND NOT s:{meta_label}" if meta_label else ""
+
+        # ★ 출처(구조) 관계 제외 (text 검색과 동일한 이유)
+        params['struct_rels'] = _STRUCTURAL_RELS
+
         field_returns = ", ".join([
             f"CASE WHEN r.{f} IS NOT NULL THEN r.{f} ELSE '' END AS {f}"
             for f in return_fields
         ])
 
+        # 3) 벡터 검색 → 나온 노드(s)를 트리플의 주어로 삼아 관계까지 확장
+        #    - queryNodes 로 상위 (limit*3) 개 후보를 넉넉히 뽑고,
+        #      메타 노드 제외 + 관계 필터를 적용한 뒤 vec_score 순으로 limit 개만 사용.
         query_str = f"""
             CALL db.index.vector.queryNodes('{vector_index}', $limit * 3, $q_emb)
             YIELD node AS s, score AS vec_score
             MATCH (s:{dataset})-[r]->(o:{dataset})
-            WHERE true {filter_clause}
+            WHERE NOT type(r) IN $struct_rels {node_filter} {filter_clause}
             RETURN s.name AS sname, s.type AS stype,
                    type(r) AS rel,
                    o.name AS oname, o.type AS otype,

@@ -175,11 +175,14 @@ class Neo4jRetriever:
             return {}
         try:
             with self.driver.session() as session:
+                # 엔티티 타입만 색상 팔레트에 매핑한다.
+                # ★ Paper/Document 는 메타 노드 타입이라 서브그래프에 그려지지 않으므로
+                #   범례(legend)에서도 제외해 목록을 엔티티 타입만으로 유지한다.
                 types = [
                     r['t'] for r in session.run(
                         "MATCH (n) WHERE n.type IS NOT NULL "
                         "RETURN DISTINCT n.type AS t ORDER BY t"
-                    ) if r['t'] and r['t'] != 'Unknown'
+                    ) if r['t'] and r['t'] not in ('Unknown', 'Paper', 'Document')
                 ]
             return {t: _TYPE_PALETTE[i % len(_TYPE_PALETTE)] for i, t in enumerate(types)}
         except Exception as e:
@@ -365,9 +368,17 @@ class Neo4jRetriever:
 
         try:
             with self.driver.session() as session:
+                # ★ 스키마 변경 대응:
+                #   - FROM_PAPER / FROM_DOC 는 엔티티→메타 노드 출처 관계이므로
+                #     시각화에서 제외한다 (의미 트리플만 그린다).
+                #   - 메타 노드(Paper/Document)는 이름이 doc_id 라서 보통 $names 에
+                #     안 잡히지만, 방어적으로 레이블로도 제외한다.
                 query = """
                     MATCH (s)-[r]->(o)
                     WHERE s.name IN $names AND o.name IN $names
+                      AND NOT type(r) IN ['FROM_PAPER', 'FROM_DOC']
+                      AND NOT s:Paper AND NOT s:Document
+                      AND NOT o:Paper AND NOT o:Document
                 """
                 if dataset and dataset != 'All':
                     query += " AND $dataset IN labels(s) AND $dataset IN labels(o)"
