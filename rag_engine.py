@@ -657,13 +657,17 @@ class GraphRAG:
         # ── 문서 컨텍스트 (A + B) ───────────────────────────────────────────────
         # 문서 doc_id 후보 = 트리플에서 나온 출처 doc_id (A)
         #                  ∪ 문서 벡터 검색으로 찾은 관련 문서 doc_id (B, vector/hybrid 모드)
-        doc_ids = self._collect_doc_ids(rows)                    # A: 트리플 출처 문서
-        if search_mode in ('vector', 'hybrid'):
-            doc_ids |= set(self._doc_vector_retrieve(query_text, cfg))       # B: 의미 검색
-        if search_mode in ('text', 'hybrid'):
-            doc_ids |= set(self._doc_fulltext_retrieve(keywords_str, cfg))   # C: 키워드 검색
+        ids_a = self._collect_doc_ids(rows)                              # A: 트리플 출처 문서
+        ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if search_mode in ('vector', 'hybrid') else set()   # B
+        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if search_mode in ('text', 'hybrid') else set()  # C
+        doc_ids = ids_a | ids_b | ids_c
+        print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
+              f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} → 합집합 {len(doc_ids)}")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg)
+        if doc_ids and not docs_ctx:
+            print(f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
+                  f"(doc_id 불일치 또는 doc_label/속성 확인 필요). 예시 id: {list(doc_ids)[:3]}")
 
         # ── 트리플/문서 컨텍스트 결합 ────────────────────────────────────────────
         # 둘 다 비면 _NO_RESULT. 하나라도 있으면 해당 섹션만 이어붙인다.
