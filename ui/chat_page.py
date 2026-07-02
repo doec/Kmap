@@ -38,7 +38,7 @@ _DATASET_CHIP_COLOR = {
 # ── dataset tab labels ──────────────────────────────────────────────────────────────────────────────────
 _DATASET_TABS = [
     ("전체",    "All"),
-    ("주간보고", REPORTS_DATASET),
+    ("ReportsDB", REPORTS_DATASET),
     ("논문",    PAPERS_DATASET),
     ("실험",    "ExperimentsDB"),   # future — disabled
 ]
