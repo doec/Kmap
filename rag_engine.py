@@ -14,6 +14,36 @@ sys.path.insert(0, str(ROOT))
 from llm_util import ask_llm, ask_llm_messages, ask_llm_stream_iter_messages
 from embedding_util import get_embedding, node_text
 
+# ────────────────────────────────────────────────────────────────────────────
+# 코드→물질명 정규화 (ReportsDB 전용)
+# ────────────────────────────────────────────────────────────────────────────
+# 적재 파이프라인의 A1_prompt 모듈에 있는 preprocess_text / CODE_MAP 을 재사용해
+# 사용자 질의의 코드(예: "D1")를 물질명("HfO2")으로 변환한다.
+# ReportsDB 의 임베딩/컨텍스트가 물질명(content_norm) 기반이므로, 질의도 같은
+# 어휘로 맞춰야 검색이 잘 맞는다.
+#
+# A1_prompt 는 적재 파이프라인 쪽 파일이라 이 앱 저장소에 없을 수 있다.
+# 그럴 때는 정규화 없이(원본 질의 그대로) 동작하도록 안전하게 폴백한다.
+try:
+    from A1_prompt import preprocess_text as _preprocess_text, CODE_MAP as _CODE_MAP
+    _NORMALIZE_AVAILABLE = True
+except Exception as _e:
+    _preprocess_text = None
+    _CODE_MAP = None
+    _NORMALIZE_AVAILABLE = False
+    print(f"[Debug] A1_prompt 미탑재 → 코드 정규화 비활성화 ({_e})")
+
+
+def _normalize_query(text: str) -> str:
+    """질의 문자열의 코드를 물질명으로 변환. 모듈이 없으면 원본 그대로 반환."""
+    if not text or not _NORMALIZE_AVAILABLE:
+        return text
+    try:
+        return _preprocess_text(text, _CODE_MAP)
+    except Exception as e:
+        print(f"[Debug] 질의 정규화 실패 → 원본 사용: {e}")
+        return text
+
 from dotenv import load_dotenv
 import os
 
@@ -88,9 +118,15 @@ DATASETS: dict = {
         'default_mode':   'hybrid',
         'search_hops':    None,
         # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
-        'doc_vector_index': 'reportsdb_doc_embedding',   # Document 노드(content 기반) 벡터 인덱스
+        'doc_vector_index': 'reportsdb_doc_embedding',   # Document 노드 벡터 인덱스
         'doc_label':        'Document',                  # 메타 노드 레이블
-        'doc_body_field':   'content',                   # 본문 속성명 (보고서 전문)
+        # ★ content_norm: 코드(D1)를 물질명(HfO2)으로 변환한 정규화 본문.
+        #   embedding 도 content_norm 기반이고 LLM 컨텍스트도 물질명으로 주는 게
+        #   의미 파악에 유리하므로, 답변 컨텍스트용 본문으로 content_norm 을 쓴다.
+        'doc_body_field':   'content_norm',
+        # ★ ReportsDB 는 사용자 질의에 코드(D1 등)가 섞일 수 있으므로,
+        #   검색 전에 코드→물질명으로 질의를 정규화한다 (아래 _normalize_query).
+        'normalize_query':  True,
     },
     PAPERS_DATASET: {
         'description':    PAPERS_DESC,
@@ -460,6 +496,8 @@ class GraphRAG:
 
         # doc_label 로 메타 노드를 특정하고, 본문 속성명은 데이터셋마다 다르므로
         # 쿼리 문자열에 직접 끼워넣는다(값이 아니라 스키마라 파라미터화 불가).
+        # body_field(content_norm 등)가 비어 있는 노드를 대비해 원본 content 로 폴백.
+        # (Paper 노드엔 content 가 없으므로 COALESCE 는 자연히 body_field 값만 남긴다)
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE m.doc_id IN $ids
@@ -468,7 +506,7 @@ class GraphRAG:
                    m.author     AS author,
                    m.date       AS date,
                    m.source_url AS source_url,
-                   m.{body_field} AS body
+                   COALESCE(m.{body_field}, m.content) AS body
         """
         try:
             with self.driver.session() as session:
@@ -510,6 +548,16 @@ class GraphRAG:
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
         vector_index = cfg.get('vector_index')
+
+        # ★ ReportsDB 등 정규화 대상 데이터셋은 검색 전에 질의의 코드를 물질명으로 변환.
+        #   키워드 검색(keywords_str)과 벡터 검색(query_text) 양쪽 모두 정규화해
+        #   content_norm/정규화된 엔티티명과 어휘를 맞춘다.
+        if cfg.get('normalize_query'):
+            norm_kw    = _normalize_query(keywords_str)
+            norm_query = _normalize_query(query_text)
+            if norm_kw != keywords_str or norm_query != query_text:
+                print(f"[Debug] {dataset} 질의 정규화: '{query_text}' → '{norm_query}'")
+            keywords_str, query_text = norm_kw, norm_query
 
         if search_mode in ('vector', 'hybrid') and not vector_index:
             print(f"[Debug] {dataset}: vector index 없음 → text 모드로 폴백")
