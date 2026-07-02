@@ -124,6 +124,7 @@ DATASETS: dict = {
         #   embedding 도 content_norm 기반이고 LLM 컨텍스트도 물질명으로 주는 게
         #   의미 파악에 유리하므로, 답변 컨텍스트용 본문으로 content_norm 을 쓴다.
         'doc_body_field':   'content_norm',
+        'doc_fulltext_index': 'doc_fulltext',   # ★ C: 문서 본문 키워드(FULLTEXT) 검색
         # ★ ReportsDB 는 사용자 질의에 코드(D1 등)가 섞일 수 있으므로,
         #   검색 전에 코드→물질명으로 질의를 정규화한다 (아래 _normalize_query).
         'normalize_query':  True,
@@ -151,6 +152,7 @@ DATASETS: dict = {
         'doc_vector_index': 'paper_abstract_embedding',  # Paper 노드(abstract 기반) 벡터 인덱스
         'doc_label':        'Paper',                     # 메타 노드 레이블
         'doc_body_field':   'abstract',                  # 본문 속성명 (논문 초록)
+        'doc_fulltext_index': 'paper_fulltext',          # ★ C: 초록 키워드(FULLTEXT) 검색
     },
 }
 
@@ -475,6 +477,49 @@ class GraphRAG:
             print(f"[Debug] 문서 벡터 검색 실패: {e}")
             return []
 
+    # ── C 기능: 문서 본문 키워드(FULLTEXT) 검색 ─────────────────────────────────
+    def _doc_fulltext_retrieve(self, keywords_str: str, cfg: dict,
+                               limit: int = DOC_SEARCH_LIMIT) -> list[str]:
+        """
+        doc_fulltext / paper_fulltext 인덱스로 문서 본문(title+content(_norm)/abstract)에서
+        키워드를 검색해 관련 문서의 doc_id 목록을 돌려준다.
+
+        벡터 검색(_doc_vector_retrieve)이 "의미 유사도"로 찾는다면, 이건 "단어 일치"로
+        찾는다. 코드(D1)·모델명·수치처럼 정확한 표기가 중요한 검색에 강하다.
+        (ReportsDB 는 content 원문(코드)까지 인덱싱돼 있어 정규화 전 코드로도 매칭됨)
+        """
+        ft_index = cfg.get('doc_fulltext_index')
+        if not ft_index or not keywords_str:
+            return []
+
+        # Lucene 질의 문자열 구성:
+        # 키워드에 '/'·'-' 등 Lucene 특수문자가 있으면 파싱 오류가 나므로,
+        # 각 키워드를 큰따옴표로 감싼 구(phrase)로 만들고 내부 특수문자는 이스케이프한다.
+        # 따옴표로 감싼 구들을 공백으로 이으면 Lucene 기본 OR(should) 매칭이 된다.
+        keywords = [kw.strip() for kw in keywords_str.replace(",", " ").split() if kw.strip()]
+        if not keywords:
+            return []
+
+        def _escape(kw: str) -> str:
+            return kw.replace('\\', '\\\\').replace('"', '\\"')
+
+        lucene_query = " ".join(f'"{_escape(kw)}"' for kw in keywords)
+
+        query_str = """
+            CALL db.index.fulltext.queryNodes($index, $q, {limit: $limit})
+            YIELD node, score
+            RETURN node.doc_id AS doc_id, score
+            ORDER BY score DESC
+        """
+        params = {'index': ft_index, 'q': lucene_query, 'limit': limit}
+        try:
+            with self.driver.session() as session:
+                rows = [dict(r) for r in session.run(query_str, **params)]
+            return [r['doc_id'] for r in rows if r.get('doc_id')]
+        except Exception as e:
+            print(f"[Debug] 문서 FULLTEXT 검색 실패: {e}")
+            return []
+
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict) -> str:
         """
@@ -612,9 +657,11 @@ class GraphRAG:
         # ── 문서 컨텍스트 (A + B) ───────────────────────────────────────────────
         # 문서 doc_id 후보 = 트리플에서 나온 출처 doc_id (A)
         #                  ∪ 문서 벡터 검색으로 찾은 관련 문서 doc_id (B, vector/hybrid 모드)
-        doc_ids = self._collect_doc_ids(rows)                    # A
+        doc_ids = self._collect_doc_ids(rows)                    # A: 트리플 출처 문서
         if search_mode in ('vector', 'hybrid'):
-            doc_ids |= set(self._doc_vector_retrieve(query_text, cfg))  # B
+            doc_ids |= set(self._doc_vector_retrieve(query_text, cfg))       # B: 의미 검색
+        if search_mode in ('text', 'hybrid'):
+            doc_ids |= set(self._doc_fulltext_retrieve(keywords_str, cfg))   # C: 키워드 검색
 
         docs_ctx = self._fetch_documents(doc_ids, cfg)
 
