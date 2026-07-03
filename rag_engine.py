@@ -114,11 +114,18 @@ DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷 (초록/�
 DOC_BODY_MAXLEN   = 700   # 답변 컨텍스트에 넣을 문서 본문(abstract/content) 최대 길이
 
 # 엔티티 벡터 검색(짧은 "name (type)" 텍스트 vs 긴 질문 문장) 최소 유사도 컷.
-# 문서 벡터 검색(DOC_SCORE_MIN=0.6)보다 낮게 잡는다: 비교 대상 텍스트가 짧아
-# 코사인 유사도가 구조적으로 더 낮게 나오는 경향이 있기 때문.
-# ★ 잠정값(0.3)이며, 실행 로그에 남는 점수 분포(최소/최대/평균)를 보고
-#   실제 데이터에 맞춰 조정해야 한다.
+# ★ 실측 결과, BGE-M3 임베딩은 무관한 쌍끼리도 코사인 유사도가 0.8 근처에서
+#   시작하는 baseline 이 높아 절대값 컷오프로는 관련/무관을 구분하기 어렵다
+#   (실측: 관련도 무관도 전부 0.79~0.85 사이에 몰려 있음).
+#   그래서 절대값 대신 "1등 점수 대비 상대적 격차"로 자른다 (아래 RELATIVE_SCORE_GAP).
+#   이 값 자체는 폴백 하한선(너무 낮은 절대 점수는 그냥 제외)으로만 쓴다.
 ENTITY_VECTOR_SCORE_MIN = 0.3
+
+# 상대적 컷오프: 1등 점수 대비 이 값 이상 차이 나면 제외.
+# BGE-M3 처럼 점수가 좁은 범위(0.03~0.05)에 몰리는 임베딩에서, 절대값 컷 대신
+# "얼마나 1등과 벌어지는지"로 관련도를 가른다. 값이 작을수록 더 엄격하게 거른다.
+# ★ 잠정값이며, 실제 데이터로 관련/무관 결과의 격차를 보고 조정해야 한다.
+RELATIVE_SCORE_GAP = 0.02
 
 # ────────────────────────────────────────────────────────────────────────────
 # 데이터셋별 검색 설정
@@ -477,6 +484,18 @@ class GraphRAG:
                     for r in rows:
                         print(f"  [Debug]   score={r['vec_score']:.3f}  "
                               f"({r.get('sname')}) --[{r.get('rel')}]--> ({r.get('oname')})")
+
+                    # ★ 상대 컷오프: BGE-M3 는 무관한 쌍도 baseline 유사도가 높아
+                    #   절대값 컷(ENTITY_VECTOR_SCORE_MIN)만으로는 옥석이 안 걸러진다.
+                    #   1등 점수 대비 RELATIVE_SCORE_GAP 이상 뒤처지는 결과는 제외한다.
+                    top_score = max(scores)
+                    before = len(rows)
+                    rows = [r for r in rows
+                            if r.get('vec_score') is not None
+                            and top_score - r['vec_score'] <= RELATIVE_SCORE_GAP]
+                    if len(rows) != before:
+                        print(f"[Debug] {dataset} 상대 컷오프 적용(gap≤{RELATIVE_SCORE_GAP}): "
+                              f"{before}건 → {len(rows)}건")
             return rows
         except Exception as e:
             print(f"[Debug] {dataset} vector 검색 실패 → text 결과만 사용: {e}")
@@ -551,6 +570,14 @@ class GraphRAG:
                 print(f"[Debug] 문서 벡터 검색 결과 (컷={DOC_SCORE_MIN}, {len(rows)}건):")
                 for r in rows:
                     print(f"  [Debug]   score={r['score']:.3f}  doc_id={r.get('doc_id')}")
+
+                # ★ 상대 컷오프 (엔티티 벡터 검색과 동일한 이유)
+                top_score = max(r['score'] for r in rows)
+                before = len(rows)
+                rows = [r for r in rows if top_score - r['score'] <= RELATIVE_SCORE_GAP]
+                if len(rows) != before:
+                    print(f"[Debug] 문서 벡터 상대 컷오프 적용(gap≤{RELATIVE_SCORE_GAP}): "
+                          f"{before}건 → {len(rows)}건")
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
             print(f"[Debug] 문서 벡터 검색 실패: {e}")
