@@ -155,6 +155,13 @@ RELATIVE_SCORE_GAP = 0.02
 #                    'WHERE NOT node:<meta_label>' 로 걸러내야 한다.
 #   default_mode   : 사용자가 모드를 지정하지 않았을 때 기본 검색 모드
 #   search_hops    : 그래프 확장 hop 수 (None 이면 전역 기본값 사용)
+#   hop2_relations : ★ 2-hop 확장(1차에서 찾은 엔티티를 앵커로 삼아 한 단계 더
+#                    나아가는 단계)에서 "따라갈" 관계 타입 화이트리스트.
+#                    구조/조성 관계(HAS_PHASE, STACKED_ON 등)까지 다 따라가면
+#                    원래 질문과 무관한 잡음이 급격히 늘어나므로,
+#                    "인과·성능" 계열 관계로만 한정해 의미 있는 추론 체인만 확장한다.
+#                    (1차 검색 자체는 이 제한을 받지 않는다 — 질문 키워드가
+#                     직접 매칭되면 관계 타입 무관하게 잡아야 하므로)
 DATASETS: dict = {
     REPORTS_DATASET: {
         'description':    REPORTS_DESC,
@@ -173,6 +180,10 @@ DATASETS: dict = {
         'meta_label':     'Document',                    # ★ 벡터 검색에서 제외할 메타 노드
         'default_mode':   'hybrid',
         'search_hops':    None,
+        # ReportsDB 인과·성능 계열 관계만 2-hop 확장 대상으로 삼는다.
+        # (구조 계열 HAS_BOTTOM_ELECTRODE/HAS_DIELECTRIC/INSERTED_* 등은 제외)
+        'hop2_relations': ['DEPOSITED_BY', 'TREATED_BY', 'ACHIEVES',
+                           'IMPROVES', 'DEGRADES', 'COMPARED_TO', 'DOPED_WITH'],
         # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
         'doc_vector_index': 'reportsdb_doc_embedding',   # Document 노드 벡터 인덱스
         'doc_label':        'Document',                  # 메타 노드 레이블
@@ -205,6 +216,12 @@ DATASETS: dict = {
         'meta_label':     'Paper',
         'default_mode':   'hybrid',
         'search_hops':    None,
+        # PapersDB 인과·성능 계열 관계만 2-hop 확장 대상으로 삼는다.
+        # (물질·공정 계열 DEPOSITED_BY/STACKED_ON/COMPOSED_OF 등은 제외)
+        'hop2_relations': ['CAUSED_BY', 'EXPLAINED_BY', 'SOLVED_BY', 'SUPPRESSES',
+                           'INDUCES', 'PREVENTS', 'TRIGGERS',
+                           'IMPROVES', 'DEGRADES', 'ACHIEVES', 'AFFECTS',
+                           'CORRELATED_WITH', 'TRADEOFF_WITH', 'HAS_PERFORMANCE'],
         # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
         'doc_vector_index': 'paper_abstract_embedding',  # Paper 노드(abstract 기반) 벡터 인덱스
         'doc_label':        'Paper',                     # 메타 노드 레이블
@@ -379,7 +396,13 @@ class GraphRAG:
         return "\n".join(lines)
 
     def _text_retrieve_raw(self, keywords_str: str, dataset: str, cfg: dict,
-                           limit: int, date_from: str, date_to: str) -> list[dict]:
+                           limit: int, date_from: str, date_to: str,
+                           allowed_rels: list[str] = None) -> list[dict]:
+        """
+        allowed_rels 가 주어지면 그 관계 타입으로만 결과를 제한한다.
+        (1차 검색에서는 None 으로 호출해 관계 타입 무관하게 키워드 매칭하고,
+         2-hop 확장에서는 cfg['hop2_relations'] 를 넘겨 인과·성능 계열로만 제한한다.)
+        """
         keywords      = keywords_str.replace(",", " ").split()
         return_fields = cfg['return_fields']
         return_clause = self._build_return_clause(return_fields)
@@ -388,9 +411,15 @@ class GraphRAG:
         # ★ 출처(구조) 관계 제외: FROM_PAPER / FROM_DOC 는 의미 트리플이 아님
         params['struct_rels'] = _STRUCTURAL_RELS
 
+        rel_filter = ""
+        if allowed_rels:
+            params['allowed_rels'] = allowed_rels
+            rel_filter = "AND type(r) IN $allowed_rels"
+
         query_str = f"""
             MATCH (s:{dataset})-[r]->(o:{dataset})
             WHERE NOT type(r) IN $struct_rels
+              {rel_filter}
               AND {" AND ".join(where_parts)}
             RETURN {return_clause}
             ORDER BY {cfg['sort_field']} {cfg['sort_order']}
@@ -501,10 +530,83 @@ class GraphRAG:
             print(f"[Debug] {dataset} vector 검색 실패 → text 결과만 사용: {e}")
             return []
 
+    def _vector_retrieve_2hop(self, query_text: str, dataset: str, cfg: dict,
+                              limit: int, date_from: str, date_to: str) -> list[dict]:
+        """
+        벡터 검색으로 찾은 엔티티(1차, 의미상 가장 관련 있는 진입점)를 앵커 삼아,
+        순수 그래프 탐색으로 한 단계 더 확장한다 (텍스트 2-hop과 동일한 철학).
+
+        임베딩을 다시 계산하지 않고 그래프 구조만 따라가며, hop2_relations
+        화이트리스트(인과·성능 계열)로 확장 범위를 제한해 잡음을 줄인다.
+        """
+        hop1_rows = self._vector_retrieve_raw(
+            query_text, dataset, cfg, limit, date_from, date_to
+        )
+
+        hop1_nodes = set()
+        for r in hop1_rows:
+            if r.get('sname'): hop1_nodes.add(r['sname'])
+            if r.get('oname'): hop1_nodes.add(r['oname'])
+
+        hop2_relations = cfg.get('hop2_relations')
+        if not hop1_nodes or not hop2_relations:
+            return hop1_rows[:limit]
+
+        return_fields = cfg['return_fields']
+        return_clause = self._build_return_clause(return_fields)
+        min_confidence = cfg.get('min_confidence', None)
+        has_date       = cfg.get('has_date', False)
+
+        filter_parts = []
+        params: dict = {
+            'anchors':      list(hop1_nodes),
+            'allowed_rels': hop2_relations,
+            'struct_rels':  _STRUCTURAL_RELS,
+            'limit':        limit,
+        }
+        if min_confidence is not None:
+            filter_parts.append("r.confidence >= $min_confidence")
+            params['min_confidence'] = min_confidence
+        if has_date and date_from:
+            filter_parts.append("r.date >= $date_from")
+            params['date_from'] = date_from
+        if has_date and date_to:
+            filter_parts.append("r.date <= $date_to")
+            params['date_to'] = date_to
+        filter_clause = f"AND {' AND '.join(filter_parts)}" if filter_parts else ""
+
+        # 앵커 노드(1차 결과)가 주어 또는 목적어로 등장하는, 인과·성능 계열
+        # 관계만 그래프에서 직접 탐색한다 (임베딩 재계산 없음, 순수 그래프 확장).
+        query_str = f"""
+            MATCH (s:{dataset})-[r]->(o:{dataset})
+            WHERE NOT type(r) IN $struct_rels
+              AND type(r) IN $allowed_rels
+              AND (s.name IN $anchors OR o.name IN $anchors)
+              {filter_clause}
+            RETURN {return_clause}
+            LIMIT $limit
+        """
+        try:
+            with self.driver.session() as session:
+                hop2_rows = [dict(r) for r in session.run(query_str, **params)]
+        except Exception as e:
+            print(f"[Debug] {dataset} 벡터 2-hop 확장 실패: {e}")
+            hop2_rows = []
+
+        seen: dict = {}
+        for r in hop1_rows + hop2_rows:
+            key = f"{r.get('sname')}|{r.get('rel')}|{r.get('oname')}"
+            seen[key] = r
+
+        print(f"[Debug] {dataset} 벡터 2-hop: 1차 {len(hop1_rows)}개 + "
+              f"2차(인과·성능 확장) {len(hop2_rows)}개 → 중복 제거 후 {min(len(seen), limit)}개")
+        return list(seen.values())[:limit]
+
     def _text_retrieve_2hop(self, keywords_str: str, dataset: str, cfg: dict,
                             limit: int, date_from: str, date_to: str) -> list[dict]:
         hop_limit = limit * 2
 
+        # 1차 검색: 질문 키워드로 매칭 — 관계 타입 무관 (원 키워드가 직접 맞은 것이므로)
         hop1_rows = self._text_retrieve_raw(
             keywords_str, dataset, cfg, hop_limit, date_from, date_to
         )
@@ -517,9 +619,14 @@ class GraphRAG:
         if not hop1_nodes:
             return hop1_rows[:limit]
 
+        # 2차 확장: 1차 엔티티를 앵커로 삼아 한 단계 더 나아가되,
+        # ★ hop2_relations 화이트리스트로 "인과·성능 계열" 관계만 따라간다.
+        #   (구조/조성 관계까지 다 따라가면 원 질문과 무관한 잡음이 급증하기 때문)
+        hop2_relations = cfg.get('hop2_relations')
         extended_keywords = keywords_str + ", " + ", ".join(list(hop1_nodes)[:10])
         hop2_rows = self._text_retrieve_raw(
-            extended_keywords, dataset, cfg, hop_limit, date_from, date_to
+            extended_keywords, dataset, cfg, hop_limit, date_from, date_to,
+            allowed_rels=hop2_relations
         )
 
         seen: dict = {}
@@ -769,7 +876,9 @@ class GraphRAG:
                     else self._text_retrieve_raw(keywords_str, dataset, cfg, limit, date_from, date_to))
 
         elif search_mode == 'vector':
-            rows = self._vector_retrieve_raw(query_text, dataset, cfg, limit, date_from, date_to)
+            rows = (self._vector_retrieve_2hop(query_text, dataset, cfg, limit, date_from, date_to)
+                    if hops == 2
+                    else self._vector_retrieve_raw(query_text, dataset, cfg, limit, date_from, date_to))
 
         else:  # hybrid
             fetch_limit = limit * 3
@@ -779,7 +888,7 @@ class GraphRAG:
                     keywords_str, dataset, cfg, fetch_limit, date_from, date_to
                 )
                 f_vec = executor.submit(
-                    self._vector_retrieve_raw,
+                    self._vector_retrieve_2hop if hops == 2 else self._vector_retrieve_raw,
                     query_text, dataset, cfg, fetch_limit, date_from, date_to
                 )
                 text_rows = f_text.result()
