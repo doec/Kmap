@@ -1,4 +1,5 @@
 import sys
+import re
 import json
 from pathlib import Path
 from neo4j import GraphDatabase
@@ -51,6 +52,26 @@ def _normalize_query(text: str) -> str:
     except Exception as e:
         print(f"[Debug] 질의 정규화 실패 → 원본 사용: {e}")
         return text
+
+
+def _detect_codes(text: str) -> dict:
+    """
+    질문 문자열에 CODE_MAP 의 코드(예: "D1", "BD30")가 등장하는지 검사해
+    {코드: 물질명} 형태로 돌려준다.
+
+    검색 컨텍스트(트리플/문서)는 이미 물질명(content_norm) 기준으로 되어 있어서,
+    LLM 입장에서는 "질문의 코드"와 "컨텍스트의 물질명"이 다른 단어로 보여
+    서로 연결 짓지 못하고 답변을 못할 수 있다. 이 매핑을 시스템 프롬프트에
+    명시적으로 알려주면 LLM 이 "D1 = HfO2" 라는 걸 알고 답변할 수 있다.
+    """
+    if not text or not _NORMALIZE_AVAILABLE or not _CODE_MAP:
+        return {}
+    found = {}
+    for code, material in _CODE_MAP.items():
+        # 단어 경계 기준으로 코드가 실제로 등장하는지 확인 (부분 문자열 오탐 방지)
+        if re.search(rf'\b{re.escape(code)}\b', text, re.IGNORECASE):
+            found[code] = material
+    return found
 
 from dotenv import load_dotenv
 import os
@@ -790,10 +811,24 @@ class GraphRAG:
             date_info = (f"\n검색 적용 날짜 범위: "
                          f"{date_from or '제한없음'} ~ {date_to or '제한없음'}")
 
+        # ★ 질문에 사내 코드(D1, BD30 등)가 있으면 물질명 매핑을 프롬프트에 명시한다.
+        #   검색 컨텍스트(트리플/문서)는 물질명(content_norm) 기준으로 되어 있어서,
+        #   이 매핑이 없으면 LLM 이 "질문의 코드"와 "컨텍스트의 물질명"을 별개로 보고
+        #   답변을 못 하거나 엉뚱하게 답할 수 있다.
+        code_map_found = _detect_codes(query)
+        code_info = ""
+        if code_map_found:
+            mapping_lines = "\n".join(f"- {code} = {material}" for code, material in code_map_found.items())
+            code_info = f"""
+
+질문에 사용된 사내 코드명과 실제 물질명 매핑 (컨텍스트는 물질명 기준으로 제공됨):
+{mapping_lines}
+→ 질문의 코드명이 컨텍스트의 물질명과 같은 대상을 가리킨다는 것을 인지하고 답변하세요."""
+
         system_prompt = f"""당신은 DRAM MIM 커패시터 소재 연구 전문가입니다.
 다음 지식 그래프 컨텍스트가 제공됩니다.
 
-{dataset_info}{date_info}
+{dataset_info}{date_info}{code_info}
 
 답변 규칙:
 - 제공된 컨텍스트와 이전 대화 내용을 적극적으로 활용하여 답하세요.
