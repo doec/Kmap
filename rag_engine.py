@@ -816,6 +816,9 @@ class GraphRAG:
         #   이 매핑이 없으면 LLM 이 "질문의 코드"와 "컨텍스트의 물질명"을 별개로 보고
         #   답변을 못 하거나 엉뚱하게 답할 수 있다.
         code_map_found = _detect_codes(query)
+        print(f"[Debug] 코드 정규화 모듈 로드됨: {_NORMALIZE_AVAILABLE} "
+              f"(CODE_MAP 항목 수: {len(_CODE_MAP) if _CODE_MAP else 0})")
+        print(f"[Debug] 질문에서 감지된 코드 매핑: {code_map_found}")
         code_info = ""
         if code_map_found:
             mapping_lines = "\n".join(f"- {code} = {material}" for code, material in code_map_found.items())
@@ -852,6 +855,13 @@ class GraphRAG:
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(self.history)
         messages.append({"role": "user", "content": user_message_content})
+
+        # ★ 디버그: LLM 에 실제로 전달되는 프롬프트 전문을 그대로 출력한다.
+        print("[Debug] ===== LLM 시스템 프롬프트 =====")
+        print(system_prompt)
+        print("[Debug] ===== LLM 사용자 메시지 =====")
+        print(user_message_content)
+        print("[Debug] ================================")
 
         # [단계 3] LLM 답변 생성 (여기서부터 content 청크가 스트리밍됨)
         yield {'type': 'status', 'text': '✍️ 답변 생성 중…'}
