@@ -132,6 +132,7 @@ DATASETS: dict = {
         #   embedding 도 content_norm 기반이고 LLM 컨텍스트도 물질명으로 주는 게
         #   의미 파악에 유리하므로, 답변 컨텍스트용 본문으로 content_norm 을 쓴다.
         'doc_body_field':   'content_norm',
+        'doc_body_label':   '내용',              # LLM 컨텍스트에 표기할 본문 레이블
         'doc_fulltext_index': 'doc_fulltext',   # ★ C: 문서 본문 키워드(FULLTEXT) 검색
         # ★ ReportsDB 는 사용자 질의에 코드(D1 등)가 섞일 수 있으므로,
         #   검색 전에 코드→물질명으로 질의를 정규화한다 (아래 _normalize_query).
@@ -160,6 +161,7 @@ DATASETS: dict = {
         'doc_vector_index': 'paper_abstract_embedding',  # Paper 노드(abstract 기반) 벡터 인덱스
         'doc_label':        'Paper',                     # 메타 노드 레이블
         'doc_body_field':   'abstract',                  # 본문 속성명 (논문 초록)
+        'doc_body_label':   '초록',                       # LLM 컨텍스트에 표기할 본문 레이블
         'doc_fulltext_index': 'paper_fulltext',          # ★ C: 초록 키워드(FULLTEXT) 검색
     },
 }
@@ -544,6 +546,7 @@ class GraphRAG:
 
         doc_label  = cfg.get('doc_label')
         body_field = cfg.get('doc_body_field')
+        body_label = cfg.get('doc_body_label', '내용')   # 논문='초록' / 보고서='내용'
         if not doc_label or not body_field:
             return ""
 
@@ -585,7 +588,7 @@ class GraphRAG:
             if d.get('source_url'):
                 lines.append(f"  출처: {d['source_url']}")
             if body:
-                lines.append(f"  내용: {body}")
+                lines.append(f"  {body_label}: {body}")
         return "\n".join(lines)
 
     def _collect_doc_ids(self, rows: list[dict]) -> set[str]:
