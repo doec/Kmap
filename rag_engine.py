@@ -613,7 +613,16 @@ class GraphRAG:
             norm_query = _normalize_query(query_text)
             if norm_kw != keywords_str or norm_query != query_text:
                 print(f"[Debug] {dataset} 질의 정규화: '{query_text}' → '{norm_query}'")
-            keywords_str, query_text = norm_kw, norm_query
+
+            # 키워드/FULLTEXT 검색: 원본 + 정규화 키워드를 모두 사용한다.
+            #   - 원본 키워드(BD30 등) → content(원본 코드) / 원본 엔티티명 매칭
+            #   - 정규화 키워드(HfO2 등) → content_norm(물질명) / 정규화 엔티티명 매칭
+            #   한 쿼리에서 두 어휘를 동시에 훑으므로 어느 쪽에 저장돼 있든 잡힌다.
+            if norm_kw and norm_kw != keywords_str:
+                keywords_str = keywords_str + ", " + norm_kw
+
+            # 벡터 검색: 인덱스가 content_norm(물질명) 기반이므로 정규화 질문만 사용한다.
+            query_text = norm_query
 
         if search_mode in ('vector', 'hybrid') and not vector_index:
             print(f"[Debug] {dataset}: vector index 없음 → text 모드로 폴백")
