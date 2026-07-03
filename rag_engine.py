@@ -819,9 +819,6 @@ class GraphRAG:
         #   이 매핑이 없으면 LLM 이 "질문의 코드"와 "컨텍스트의 물질명"을 별개로 보고
         #   답변을 못 하거나 엉뚱하게 답할 수 있다.
         code_map_found = _detect_codes(query)
-        print(f"[Debug] 코드 정규화 모듈 로드됨: {_NORMALIZE_AVAILABLE} "
-              f"(CODE_MAP 항목 수: {len(_CODE_MAP) if _CODE_MAP else 0})")
-        print(f"[Debug] 질문에서 감지된 코드 매핑: {code_map_found}")
         code_info = ""
         if code_map_found:
             mapping_lines = "\n".join(f"- {code} = {material}" for code, material in code_map_found.items())
@@ -830,6 +827,15 @@ class GraphRAG:
 질문에 사용된 사내 코드명과 실제 물질명 매핑 (컨텍스트는 물질명 기준으로 제공됨):
 {mapping_lines}
 → 질문의 코드명이 컨텍스트의 물질명과 같은 대상을 가리킨다는 것을 인지하고 답변하세요."""
+
+        # ★ 디버그: LLM 프롬프트에 실제로 들어가는 "코드↔물질명 매핑" 섹션만 따로 출력.
+        #   이 섹션이 비어 있으면(아래 (없음)) LLM 은 코드와 물질명을 연결하지 못한다.
+        print("[Debug] ===== 코드↔물질명 매핑 (LLM 프롬프트에 삽입될 내용) =====")
+        print(f"  모듈 로드 여부: {_NORMALIZE_AVAILABLE} "
+              f"(CODE_MAP 항목 수: {len(_CODE_MAP) if _CODE_MAP else 0})")
+        print(f"  원본 질문: '{query}'")
+        print(f"  감지된 매핑: {code_map_found if code_map_found else '(없음 — 프롬프트에 매핑 섹션 미삽입)'}")
+        print("[Debug] ===========================================================")
 
         system_prompt = f"""당신은 DRAM MIM 커패시터 소재 연구 전문가입니다.
 다음 지식 그래프 컨텍스트가 제공됩니다.
