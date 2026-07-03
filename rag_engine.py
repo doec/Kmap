@@ -42,6 +42,13 @@ except Exception:
         _NORMALIZE_AVAILABLE = False
         print(f"[Debug] A0_code_map 미탑재 → 코드 정규화 비활성화 ({_e})")
 
+if _NORMALIZE_AVAILABLE and _CODE_MAP:
+    # ★ 디버그: CODE_MAP 의 실제 키 표기를 확인하기 위해 샘플을 앱 시작 시 출력.
+    #   _detect_codes() 는 이 키와 "정확히" 일치(대소문자 무시)하는 문자열만 찾으므로,
+    #   실제 질문에 쓰는 코드 표기(하이픈/공백 등)가 이 키들과 같은 형식인지 비교해본다.
+    _sample_keys = list(_CODE_MAP.keys())[:10]
+    print(f"[Debug] CODE_MAP 키 샘플 ({len(_CODE_MAP)}개 중 {len(_sample_keys)}개): {_sample_keys}")
+
 
 def _normalize_query(text: str) -> str:
     """질의 문자열의 코드를 물질명으로 변환. 모듈이 없으면 원본 그대로 반환."""
