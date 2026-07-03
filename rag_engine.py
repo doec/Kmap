@@ -163,6 +163,12 @@ DATASETS: dict = {
         'doc_body_field':   'abstract',                  # 본문 속성명 (논문 초록)
         'doc_body_label':   '초록',                       # LLM 컨텍스트에 표기할 본문 레이블
         'doc_fulltext_index': 'paper_fulltext',          # ★ C: 초록 키워드(FULLTEXT) 검색
+        # ★ 코드→물질명 매핑(CODE_MAP)은 사내 코드에 대한 일반적인 번역이라
+        #   ReportsDB 뿐 아니라 PapersDB 검색에도 동일하게 적용해야 한다.
+        #   (예: "BD30" 으로 논문 검색 시에도 물질명으로 정규화되어야 논문
+        #    임베딩/엔티티명과 어휘가 맞는다.) CODE_MAP 에 없는 단어는 그대로 반환되므로
+        #   켜둬도 부작용이 없다.
+        'normalize_query':  True,
     },
 }
 
