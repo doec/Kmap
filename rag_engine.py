@@ -110,8 +110,15 @@ MAX_HISTORY_TURNS = 5
 
 # 문서 섹션 관련 상수
 DOC_SEARCH_LIMIT  = 5     # 문서 단위 벡터 검색으로 가져올 문서 개수 (B 기능)
-DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷
+DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷 (초록/전문처럼 긴 텍스트끼리 비교)
 DOC_BODY_MAXLEN   = 700   # 답변 컨텍스트에 넣을 문서 본문(abstract/content) 최대 길이
+
+# 엔티티 벡터 검색(짧은 "name (type)" 텍스트 vs 긴 질문 문장) 최소 유사도 컷.
+# 문서 벡터 검색(DOC_SCORE_MIN=0.6)보다 낮게 잡는다: 비교 대상 텍스트가 짧아
+# 코사인 유사도가 구조적으로 더 낮게 나오는 경향이 있기 때문.
+# ★ 잠정값(0.3)이며, 실행 로그에 남는 점수 분포(최소/최대/평균)를 보고
+#   실제 데이터에 맞춰 조정해야 한다.
+ENTITY_VECTOR_SCORE_MIN = 0.3
 
 # ────────────────────────────────────────────────────────────────────────────
 # 데이터셋별 검색 설정
@@ -434,12 +441,18 @@ class GraphRAG:
             for f in return_fields
         ])
 
+        # ★ 최소 유사도 컷: 이게 없으면 질문과 무관해도 "그나마 가장 가까운"
+        #   상위 limit 개가 그냥 다 반환되어 컨텍스트에 노이즈가 섞인다.
+        params['score_min'] = ENTITY_VECTOR_SCORE_MIN
+
         # 3) 벡터 검색 → 나온 노드(s)를 트리플의 주어로 삼아 관계까지 확장
         #    - queryNodes 로 상위 (limit*3) 개 후보를 넉넉히 뽑고,
-        #      메타 노드 제외 + 관계 필터를 적용한 뒤 vec_score 순으로 limit 개만 사용.
+        #      메타 노드 제외 + 관계 필터 + 최소 유사도 컷을 적용한 뒤
+        #      vec_score 순으로 limit 개만 사용.
         query_str = f"""
             CALL db.index.vector.queryNodes('{vector_index}', $limit * 3, $q_emb)
             YIELD node AS s, score AS vec_score
+            WHERE vec_score > $score_min
             MATCH (s:{dataset})-[r]->(o:{dataset})
             WHERE NOT type(r) IN $struct_rels {node_filter} {filter_clause}
             RETURN s.name AS sname, s.type AS stype,
@@ -453,7 +466,14 @@ class GraphRAG:
         """
         try:
             with self.driver.session() as session:
-                return [dict(r) for r in session.run(query_str, **params)]
+                rows = [dict(r) for r in session.run(query_str, **params)]
+            if rows:
+                scores = [r['vec_score'] for r in rows if r.get('vec_score') is not None]
+                if scores:
+                    print(f"[Debug] {dataset} 엔티티 벡터 점수 분포: "
+                          f"min={min(scores):.3f} max={max(scores):.3f} "
+                          f"avg={sum(scores)/len(scores):.3f} (컷={ENTITY_VECTOR_SCORE_MIN}, {len(scores)}건)")
+            return rows
         except Exception as e:
             print(f"[Debug] {dataset} vector 검색 실패 → text 결과만 사용: {e}")
             return []
