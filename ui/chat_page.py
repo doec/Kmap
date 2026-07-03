@@ -265,6 +265,38 @@ def build_chat_page():
 
             ui.separator().style('border-color:#e2e8f0;')
 
+            # ── 벡터 검색 컷오프 튜닝 (접힘 상태로 시작) ────────────────────────────
+            # rag.entity_score_min / relative_gap / doc_score_min 는 GraphRAG 인스턴스
+            # 속성이라, 여기서 바로 값을 바꾸면 다음 검색부터 즉시 반영된다.
+            with ui.expansion('벡터 검색 튜닝', icon='tune').props('dense').classes('w-full').style(
+                'font-size:12px; color:#64748b;'
+            ):
+                ui.label('엔티티 최소 유사도').style('font-size:11px; color:#94a3b8; margin-top:4px;')
+                entity_min_input = ui.number(
+                    value=rag.entity_score_min, min=0.0, max=1.0, step=0.01, format='%.2f'
+                ).props('dense outlined').style('width:100%;')
+                entity_min_input.on_value_change(
+                    lambda e: setattr(rag, 'entity_score_min', e.value)
+                )
+
+                ui.label('상대 컷오프 (1등 대비 격차)').style('font-size:11px; color:#94a3b8; margin-top:4px;')
+                gap_input = ui.number(
+                    value=rag.relative_gap, min=0.0, max=1.0, step=0.01, format='%.2f'
+                ).props('dense outlined').style('width:100%;')
+                gap_input.on_value_change(
+                    lambda e: setattr(rag, 'relative_gap', e.value)
+                )
+
+                ui.label('문서 최소 유사도').style('font-size:11px; color:#94a3b8; margin-top:4px;')
+                doc_min_input = ui.number(
+                    value=rag.doc_score_min, min=0.0, max=1.0, step=0.01, format='%.2f'
+                ).props('dense outlined').style('width:100%;')
+                doc_min_input.on_value_change(
+                    lambda e: setattr(rag, 'doc_score_min', e.value)
+                )
+
+            ui.separator().style('border-color:#e2e8f0;')
+
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
         with ui.element('div').style(
             'flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:#f8fafc;'

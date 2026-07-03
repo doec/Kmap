@@ -134,6 +134,11 @@ ENTITY_VECTOR_SCORE_MIN = 0.3
 #   — 즉 지금 폭 안에서는 gap 값 조정이 ReportsDB 엔티티 벡터 검색에 영향을 주지 않는다.
 RELATIVE_SCORE_GAP = 0.05
 
+# 디버그 로그에서 결과를 줄 단위로 출력할 때 보여줄 최대 개수.
+# 전체를 다 찍으면(최대 150건) 터미널이 감당 안 되고, 너무 줄이면 튜닝이 어려우니
+# "분포 요약(min/max/avg) + 상위 N개 미리보기 + 컷오프 전후 건수"로 절충한다.
+_DEBUG_ROW_PREVIEW = 10
+
 # ────────────────────────────────────────────────────────────────────────────
 # 데이터셋별 검색 설정
 # ────────────────────────────────────────────────────────────────────────────
@@ -263,6 +268,12 @@ class GraphRAG:
         self.history: list[dict] = []
         self.last_retrieved_nodes: list[str] = []
         self._pending_nodes: set[str] = set()
+
+        # 벡터 검색 컷오프 값들 — 세션(사용자)별로 UI에서 조정 가능하도록
+        # 모듈 상수를 인스턴스 속성으로 복사해 둔다. (기본값은 모듈 상수를 따름)
+        self.entity_score_min = ENTITY_VECTOR_SCORE_MIN   # 엔티티 벡터 검색 절대 하한
+        self.relative_gap     = RELATIVE_SCORE_GAP        # 1등 대비 상대 컷오프
+        self.doc_score_min    = DOC_SCORE_MIN             # 문서 벡터 검색 절대 하한
 
     def close(self):
         self.driver.close()
@@ -486,7 +497,7 @@ class GraphRAG:
 
         # ★ 최소 유사도 컷: 이게 없으면 질문과 무관해도 "그나마 가장 가까운"
         #   상위 limit 개가 그냥 다 반환되어 컨텍스트에 노이즈가 섞인다.
-        params['score_min'] = ENTITY_VECTOR_SCORE_MIN
+        params['score_min'] = self.entity_score_min
 
         # 3) 벡터 검색 → 나온 노드(s)를 트리플의 주어로 삼아 관계까지 확장
         #    - queryNodes 로 상위 (limit*3) 개 후보를 넉넉히 뽑고,
@@ -515,22 +526,25 @@ class GraphRAG:
                 if scores:
                     print(f"[Debug] {dataset} 엔티티 벡터 점수 분포: "
                           f"min={min(scores):.3f} max={max(scores):.3f} "
-                          f"avg={sum(scores)/len(scores):.3f} (컷={ENTITY_VECTOR_SCORE_MIN}, {len(scores)}건)")
-                    # 결과 하나하나의 점수를 그대로 출력 (컷오프 값 튜닝용)
-                    for r in rows:
+                          f"avg={sum(scores)/len(scores):.3f} (컷={self.entity_score_min}, {len(scores)}건)")
+                    # 결과 하나하나의 점수를 다 찍으면 (최대 limit*3=150건) 터미널이
+                    # 감당 안 되므로, 튜닝에 필요한 상위 _DEBUG_ROW_PREVIEW 개만 보여준다.
+                    for r in rows[:_DEBUG_ROW_PREVIEW]:
                         print(f"  [Debug]   score={r['vec_score']:.3f}  "
                               f"({r.get('sname')}) --[{r.get('rel')}]--> ({r.get('oname')})")
+                    if len(rows) > _DEBUG_ROW_PREVIEW:
+                        print(f"  [Debug]   ... 외 {len(rows) - _DEBUG_ROW_PREVIEW}건 생략")
 
                     # ★ 상대 컷오프: BGE-M3 는 무관한 쌍도 baseline 유사도가 높아
-                    #   절대값 컷(ENTITY_VECTOR_SCORE_MIN)만으로는 옥석이 안 걸러진다.
-                    #   1등 점수 대비 RELATIVE_SCORE_GAP 이상 뒤처지는 결과는 제외한다.
+                    #   절대값 컷(entity_score_min)만으로는 옥석이 안 걸러진다.
+                    #   1등 점수 대비 relative_gap 이상 뒤처지는 결과는 제외한다.
                     top_score = max(scores)
                     before = len(rows)
                     rows = [r for r in rows
                             if r.get('vec_score') is not None
-                            and top_score - r['vec_score'] <= RELATIVE_SCORE_GAP]
+                            and top_score - r['vec_score'] <= self.relative_gap]
                     if len(rows) != before:
-                        print(f"[Debug] {dataset} 상대 컷오프 적용(gap≤{RELATIVE_SCORE_GAP}): "
+                        print(f"[Debug] {dataset} 상대 컷오프 적용(gap≤{self.relative_gap}): "
                               f"{before}건 → {len(rows)}건")
             return rows
         except Exception as e:
@@ -675,22 +689,22 @@ class GraphRAG:
             'index':     doc_index,
             'limit':     limit,
             'q_emb':     q_emb,
-            'score_min': DOC_SCORE_MIN,
+            'score_min': self.doc_score_min,
         }
         try:
             with self.driver.session() as session:
                 rows = [dict(r) for r in session.run(query_str, **params)]
             if rows:
-                print(f"[Debug] 문서 벡터 검색 결과 (컷={DOC_SCORE_MIN}, {len(rows)}건):")
+                print(f"[Debug] 문서 벡터 검색 결과 (컷={self.doc_score_min}, {len(rows)}건):")
                 for r in rows:
                     print(f"  [Debug]   score={r['score']:.3f}  doc_id={r.get('doc_id')}")
 
                 # ★ 상대 컷오프 (엔티티 벡터 검색과 동일한 이유)
                 top_score = max(r['score'] for r in rows)
                 before = len(rows)
-                rows = [r for r in rows if top_score - r['score'] <= RELATIVE_SCORE_GAP]
+                rows = [r for r in rows if top_score - r['score'] <= self.relative_gap]
                 if len(rows) != before:
-                    print(f"[Debug] 문서 벡터 상대 컷오프 적용(gap≤{RELATIVE_SCORE_GAP}): "
+                    print(f"[Debug] 문서 벡터 상대 컷오프 적용(gap≤{self.relative_gap}): "
                           f"{before}건 → {len(rows)}건")
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
