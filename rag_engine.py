@@ -473,6 +473,10 @@ class GraphRAG:
                     print(f"[Debug] {dataset} 엔티티 벡터 점수 분포: "
                           f"min={min(scores):.3f} max={max(scores):.3f} "
                           f"avg={sum(scores)/len(scores):.3f} (컷={ENTITY_VECTOR_SCORE_MIN}, {len(scores)}건)")
+                    # 결과 하나하나의 점수를 그대로 출력 (컷오프 값 튜닝용)
+                    for r in rows:
+                        print(f"  [Debug]   score={r['vec_score']:.3f}  "
+                              f"({r.get('sname')}) --[{r.get('rel')}]--> ({r.get('oname')})")
             return rows
         except Exception as e:
             print(f"[Debug] {dataset} vector 검색 실패 → text 결과만 사용: {e}")
@@ -543,6 +547,10 @@ class GraphRAG:
         try:
             with self.driver.session() as session:
                 rows = [dict(r) for r in session.run(query_str, **params)]
+            if rows:
+                print(f"[Debug] 문서 벡터 검색 결과 (컷={DOC_SCORE_MIN}, {len(rows)}건):")
+                for r in rows:
+                    print(f"  [Debug]   score={r['score']:.3f}  doc_id={r.get('doc_id')}")
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
             print(f"[Debug] 문서 벡터 검색 실패: {e}")
