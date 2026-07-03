@@ -656,6 +656,9 @@ class GraphRAG:
             search_mode = 'text'
 
         print(f"[Debug] {dataset} | mode: {search_mode} | hop: {hops}")
+        # ★ 실제 검색에 쓰이는 최종 키워드/질의 문자열 (정규화 반영 후)
+        print(f"[Debug] {dataset} 실제 검색 키워드(text/fulltext): '{keywords_str}'")
+        print(f"[Debug] {dataset} 실제 검색 질의(vector): '{query_text}'")
 
         if search_mode == 'text':
             rows = (self._text_retrieve_2hop(keywords_str, dataset, cfg, limit, date_from, date_to)
