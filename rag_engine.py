@@ -75,8 +75,14 @@ def _detect_codes(text: str) -> dict:
         return {}
     found = {}
     for code, material in _CODE_MAP.items():
-        # 단어 경계 기준으로 코드가 실제로 등장하는지 확인 (부분 문자열 오탐 방지)
-        if re.search(rf'\b{re.escape(code)}\b', text, re.IGNORECASE):
+        # 단어 경계 기준으로 코드가 실제로 등장하는지 확인 (부분 문자열 오탐 방지).
+        # ★ re.ASCII 를 반드시 함께 써야 한다: 이게 없으면 Python 정규식은 \w 를
+        #   유니코드 기준으로 판단해 한글도 "단어 문자"로 취급한다. 그러면
+        #   "XX1에" 처럼 코드 바로 뒤에 조사(한글)가 공백 없이 붙는 경우
+        #   숫자(1)와 한글(에) 사이가 경계로 인식되지 않아 \b 매칭이 실패한다.
+        #   re.ASCII 를 주면 \w 가 [a-zA-Z0-9_] 로만 한정되어, 한글은 항상
+        #   "비단어 문자"가 되므로 코드 바로 뒤에 조사가 붙어도 경계가 제대로 잡힌다.
+        if re.search(rf'\b{re.escape(code)}\b', text, re.IGNORECASE | re.ASCII):
             found[code] = material
     return found
 
