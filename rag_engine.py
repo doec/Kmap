@@ -24,14 +24,22 @@ from embedding_util import get_embedding, node_text
 #
 # A1_prompt 는 적재 파이프라인 쪽 파일이라 이 앱 저장소에 없을 수 있다.
 # 그럴 때는 정규화 없이(원본 질의 그대로) 동작하도록 안전하게 폴백한다.
+# CODE_MAP / preprocess_text 는 pipelines/A0_code_map.py 에 분리되어 있다.
+# 1차: 패키지 형태(pipelines.A0_code_map)로 import 시도
+# 2차: pipelines 디렉터리를 sys.path 에 추가해 모듈 직접 import
 try:
-    from A1_prompt import preprocess_text as _preprocess_text, CODE_MAP as _CODE_MAP
+    from pipelines.A0_code_map import preprocess_text as _preprocess_text, CODE_MAP as _CODE_MAP
     _NORMALIZE_AVAILABLE = True
-except Exception as _e:
-    _preprocess_text = None
-    _CODE_MAP = None
-    _NORMALIZE_AVAILABLE = False
-    print(f"[Debug] A1_prompt 미탑재 → 코드 정규화 비활성화 ({_e})")
+except Exception:
+    try:
+        sys.path.insert(0, str(ROOT / 'pipelines'))
+        from A0_code_map import preprocess_text as _preprocess_text, CODE_MAP as _CODE_MAP
+        _NORMALIZE_AVAILABLE = True
+    except Exception as _e:
+        _preprocess_text = None
+        _CODE_MAP = None
+        _NORMALIZE_AVAILABLE = False
+        print(f"[Debug] A0_code_map 미탑재 → 코드 정규화 비활성화 ({_e})")
 
 
 def _normalize_query(text: str) -> str:
