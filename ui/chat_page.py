@@ -435,7 +435,14 @@ def build_chat_page():
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
                     ).style('max-width:calc(100% - 36px); color:#334155; min-width:60px;') as ai_col_ref:
-                        spinner = ui.spinner('dots', size='1.2em', color='indigo')
+                        # 진행 단계 표시: 스피너 + 상태 텍스트를 한 줄에 둔다.
+                        # 첫 답변 청크가 오면 이 상태 박스를 지우고 markdown 으로 교체.
+                        status_box = ui.element('div').style(
+                            'display:flex; align-items:center; gap:8px;'
+                        )
+                        with status_box:
+                            spinner = ui.spinner('dots', size='1.2em', color='indigo')
+                            status_lbl = ui.label('').style('font-size:12px; color:#94a3b8;')
 
             await asyncio.sleep(0.05)
             scroll_area.scroll_to(percent=1.0)
@@ -461,17 +468,33 @@ def build_chat_page():
             """
 
             while True:
-                chunk = await loop.run_in_executor(None, next, gen, None)
-                if chunk is None:
+                event = await loop.run_in_executor(None, next, gen, None)
+                if event is None:
                     if chunk_buffer:
                         full_text += chunk_buffer
                         if md_element:
                             md_element.set_content(full_text)
                     break
 
-                # first chunk: replace spinner with markdown element
+                # answer_stream 은 dict 이벤트를 내보낸다. (구버전 호환: 문자열이면 content 취급)
+                if isinstance(event, dict):
+                    etype = event.get('type', 'content')
+                    etext = event.get('text', '')
+                else:
+                    etype, etext = 'content', str(event)
+
+                # 진행 상태 이벤트: 상태줄만 갱신하고 다음 이벤트 대기
+                if etype == 'status':
+                    if md_element is None:      # 아직 답변 시작 전일 때만 표시
+                        status_lbl.set_text(etext)
+                        await asyncio.sleep(0)
+                    continue
+
+                chunk = etext
+
+                # first content chunk: replace status box with markdown element
                 if md_element is None:
-                    spinner.delete()
+                    status_box.delete()
                     with ai_col_ref:
                         md_element = ui.markdown('')
 
@@ -488,7 +511,7 @@ def build_chat_page():
                     await asyncio.sleep(0)
 
             if md_element is None:
-                spinner.delete()
+                status_box.delete()
                 with ai_col_ref:
                     md_element = ui.markdown('(응답을 받지 못했습니다)')
             else:

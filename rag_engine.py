@@ -682,12 +682,23 @@ class GraphRAG:
         return "\n\n".join(parts)
 
     def answer_stream(self, query: str, dataset: str = None, mode: str = None):
+        """
+        답변을 스트리밍으로 생성하는 제너레이터.
+
+        UI 에 진행 단계를 표시하기 위해, 두 종류의 이벤트를 dict 형태로 내보낸다:
+          {'type': 'status',  'text': '...'}  → 진행 상태 (검색 중/답변 생성 중 등)
+          {'type': 'content', 'text': '...'}  → 실제 답변 텍스트 청크
+        UI(chat_page.py)는 type 을 보고 상태줄을 갱신하거나 답변을 이어붙인다.
+        """
         self._pending_nodes = set()
         self.last_retrieved_nodes = []
 
         print(f"\n[Debug] ========================================")
         print(f"[Debug] 질문: {query}")
         print(f"[Debug] 데이터셋: {dataset}")
+
+        # [단계 1] 질문 분석 (키워드/날짜 추출)
+        yield {'type': 'status', 'text': '🔍 질문 분석 중…'}
 
         extracted          = self._extract_keywords(query)
         extracted_keywords = extracted['keywords']
@@ -701,6 +712,14 @@ class GraphRAG:
             search_targets = [dataset]
         else:
             search_targets = list(DATASETS.keys())
+
+        # [단계 2] 지식 그래프 검색 + N-hop 확장
+        #   대상 데이터셋들의 hop 수를 모아 표시 (보통 2-hop). retrieve() 내부에서
+        #   text 검색 시 실제 N-hop 확장이 수행된다.
+        hop_set = {(DATASETS[ds].get('search_hops') or DEFAULT_SEARCH_HOPS)
+                   for ds in search_targets}
+        hop_label = f"{max(hop_set)}-hop " if hop_set else ""
+        yield {'type': 'status', 'text': f'📚 지식 그래프 검색 중… ({hop_label}확장)'}
 
         with ThreadPoolExecutor(max_workers=len(search_targets)) as executor:
             futures = {
@@ -773,6 +792,9 @@ class GraphRAG:
         messages.extend(self.history)
         messages.append({"role": "user", "content": user_message_content})
 
+        # [단계 3] LLM 답변 생성 (여기서부터 content 청크가 스트리밍됨)
+        yield {'type': 'status', 'text': '✍️ 답변 생성 중…'}
+
         full_result = []
         for chunk in ask_llm_stream_iter_messages(
             messages=messages,
@@ -780,7 +802,7 @@ class GraphRAG:
             reasoning_effort="medium"
         ):
             full_result.append(chunk)
-            yield chunk
+            yield {'type': 'content', 'text': chunk}
 
         result = "".join(full_result)
         if result:
