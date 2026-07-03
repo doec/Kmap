@@ -271,6 +271,7 @@ class GraphRAG:
 2. 한국어 키워드는 반드시 영어 번역도 함께 추출
 3. 관련 동의어/유사어도 포함
 4. 날짜 관련 표현은 키워드에서 제외
+5. 저자/작성자 이름이 언급되면 반드시 키워드에 그대로 포함 (예: "Tao Li가 쓴 논문" → "Tao Li")
 
 질문: {query}
 출력:"""
@@ -570,6 +571,40 @@ class GraphRAG:
             print(f"[Debug] 문서 FULLTEXT 검색 실패: {e}")
             return []
 
+    # ── D 기능: 저자명으로 문서 직접 검색 ────────────────────────────────────────
+    def _doc_author_retrieve(self, keywords_str: str, cfg: dict,
+                             limit: int = DOC_SEARCH_LIMIT) -> list[str]:
+        """
+        Paper/Document 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 찾는다.
+
+        text 검색(A)은 트리플의 r.author 를 보므로 "그 저자의 트리플이 있어야"만
+        찾아지고, 저자만 언급되고 트리플에 안 걸린 논문은 놓친다. 이 채널은
+        메타 노드를 author 기준으로 직접 조회하므로 "이 사람이 쓴 논문/보고서
+        찾아줘" 류의 질문에 안정적으로 대응한다.
+        """
+        doc_label = cfg.get('doc_label')
+        if not doc_label or not keywords_str:
+            return []
+
+        keywords = [kw.strip() for kw in keywords_str.replace(",", " ").split() if kw.strip()]
+        if not keywords:
+            return []
+
+        query_str = f"""
+            MATCH (m:{doc_label})
+            WHERE m.author IS NOT NULL
+              AND any(kw IN $keywords WHERE toLower(m.author) CONTAINS toLower(kw))
+            RETURN m.doc_id AS doc_id
+            LIMIT $limit
+        """
+        try:
+            with self.driver.session() as session:
+                rows = [dict(r) for r in session.run(query_str, keywords=keywords, limit=limit)]
+            return [r['doc_id'] for r in rows if r.get('doc_id')]
+        except Exception as e:
+            print(f"[Debug] 저자 검색 실패: {e}")
+            return []
+
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict) -> str:
         """
@@ -723,9 +758,10 @@ class GraphRAG:
         ids_a = self._collect_doc_ids(rows)                              # A: 트리플 출처 문서
         ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if search_mode in ('vector', 'hybrid') else set()   # B
         ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if search_mode in ('text', 'hybrid') else set()  # C
-        doc_ids = ids_a | ids_b | ids_c
+        ids_d = set(self._doc_author_retrieve(keywords_str, cfg))       # D: 저자명 직접 검색 (모든 모드)
+        doc_ids = ids_a | ids_b | ids_c | ids_d
         print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
-              f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} → 합집합 {len(doc_ids)}")
+              f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} → 합집합 {len(doc_ids)}")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg)
         if doc_ids and not docs_ctx:
