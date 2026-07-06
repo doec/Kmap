@@ -101,6 +101,13 @@ REPORTS_DESC    = os.getenv('NEO4J_REPORTS_DESC',    '내부 연구 보고서 �
 PAPERS_DATASET  = os.getenv('NEO4J_PAPERS_DATASET',  'PapersDB')
 PAPERS_DESC     = os.getenv('NEO4J_PAPERS_DESC',     '논문 기반 인과관계 KG')
 
+# ★ 신규: OKR 문서 데이터셋. 트리플/엔티티가 없는 순수 문서형 데이터셋이라
+#   (research_item + content 를 결합 임베딩한 OKR 노드만 존재), DATASETS 설정에서
+#   엔티티 관련 필드(vector_index, hop2_relations 등)는 비워두고 문서 채널
+#   (doc_vector_index/doc_fulltext_index/doc_label)만 채운다.
+OKR_DATASET = os.getenv('NEO4J_OKR_DATASET', 'BD_OKR_bf2026')
+OKR_DESC    = os.getenv('NEO4J_OKR_DESC',    'OKR 목표/과제 문서 (~2025)')
+
 DEFAULT_SEARCH_LIMIT = 50
 DEFAULT_SEARCH_HOPS  = 2
 DEFAULT_SEARCH_MODE  = None   # None / 'text' / 'vector' / 'hybrid'
@@ -245,6 +252,34 @@ DATASETS: dict = {
         #   (예: "BD30" 으로 논문 검색 시에도 물질명으로 정규화되어야 논문
         #    임베딩/엔티티명과 어휘가 맞는다.) CODE_MAP 에 없는 단어는 그대로 반환되므로
         #   켜둬도 부작용이 없다.
+        'normalize_query':  True,
+    },
+    # ── OKR: 트리플/엔티티가 없는 순수 문서형 데이터셋 ──────────────────────────
+    # (entity)-[r]->(entity) 트리플 자체가 없으므로, "엔티티 벡터 검색·2-hop 확장"에
+    # 해당하는 필드(vector_index, meta_label, hop2_relations)는 아예 넣지 않는다.
+    # → retrieve() 가 entity 검색을 text 모드로 자동 폴백하고(빈 결과, 무해),
+    #   문서 채널(B: 벡터, C: FULLTEXT, D: 저자)만으로 문서를 찾아 컨텍스트를 구성한다.
+    OKR_DATASET: {
+        'description':    OKR_DESC,
+        'node_types':     '해당 없음 (문서 전용 데이터셋 — 트리플/엔티티 없음)',
+        'sort_field':     'confidence',
+        'sort_order':     'DESC',
+        'return_fields':  ['evidence', 'confidence', 'source_url', 'title', 'author', 'date'],
+        'search_fields':  ['s.name', 'o.name', 'r.evidence'],
+        'has_date':       True,
+        'min_confidence': None,
+        'default_mode':   'hybrid',
+        'search_hops':    None,
+        # ── 문서(OKR 노드) 관련 설정 ──
+        'doc_vector_index': 'bd_okr_doc_embedding',   # OKR 노드 결합 임베딩(research_item_norm+content_norm)
+        'doc_label':        'OKR',                    # 메타 노드 레이블
+        # ★ FULLTEXT 인덱스 이름은 실제 C1_load_data.py 에서 생성한 이름으로
+        #   맞춰야 한다. 우선 관례(paper_fulltext/doc_fulltext)를 따라 추정값을
+        #   넣어뒀으니, 실제 인덱스명이 다르면 이 값만 바꾸면 된다.
+        'doc_fulltext_index': 'okr_fulltext',
+        'doc_body_field':   'content_norm',           # 본문 속성명 (물질명 정규화본)
+        'doc_body_label':   '내용',                    # LLM 컨텍스트에 표기할 본문 레이블
+        # ReportsDB 와 마찬가지로 물질 코드가 섞일 수 있으므로 질의 정규화 적용
         'normalize_query':  True,
     },
 }
@@ -885,8 +920,15 @@ class GraphRAG:
             # 벡터 검색: 인덱스가 content_norm(물질명) 기반이므로 정규화 질문만 사용한다.
             query_text = norm_query
 
+        # ★ requested_mode: 문서 채널(B/C) 게이팅 전용으로 "사용자가 원래 요청한 모드"를
+        #   보존한다. OKR처럼 엔티티 트리플이 아예 없는(엔티티 벡터 인덱스 없음) 데이터셋도
+        #   문서 자체의 벡터 인덱스(doc_vector_index)는 가질 수 있는데, 아래에서
+        #   entity 벡터 인덱스 부재로 search_mode 를 'text' 로 강제 폴백해버리면
+        #   문서 벡터 검색(B 채널)까지 같이 꺼지는 문제가 있었다.
+        requested_mode = search_mode
+
         if search_mode in ('vector', 'hybrid') and not vector_index:
-            print(f"[Debug] {dataset}: vector index 없음 → text 모드로 폴백")
+            print(f"[Debug] {dataset}: 엔티티 벡터 index 없음 → 트리플 검색만 text 모드로 폴백")
             search_mode = 'text'
 
         print(f"[Debug] {dataset} | mode: {search_mode} | hop: {hops}")
@@ -944,8 +986,11 @@ class GraphRAG:
         # 문서 doc_id 후보 = 트리플에서 나온 출처 doc_id (A)
         #                  ∪ 문서 벡터 검색으로 찾은 관련 문서 doc_id (B, vector/hybrid 모드)
         ids_a = self._collect_doc_ids(rows)                              # A: 트리플 출처 문서
-        ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if search_mode in ('vector', 'hybrid') else set()   # B
-        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if search_mode in ('text', 'hybrid') else set()  # C
+        # ★ B/C 채널은 requested_mode(트리플용 폴백 이전 값) 기준으로 게이팅한다.
+        #   그래야 OKR처럼 엔티티 벡터 인덱스가 없어 search_mode 가 'text'로
+        #   폴백된 경우에도, 문서 자체의 벡터 검색(B)은 정상적으로 동작한다.
+        ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if requested_mode in ('vector', 'hybrid') else set()   # B
+        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if requested_mode in ('text', 'hybrid') else set()  # C
         ids_d = set(self._doc_author_retrieve(keywords_str, cfg))       # D: 저자명 직접 검색 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d
         print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
