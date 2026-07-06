@@ -235,7 +235,7 @@ DATASETS: dict = {
                            'IMPROVES', 'DEGRADES', 'ACHIEVES', 'AFFECTS',
                            'CORRELATED_WITH', 'TRADEOFF_WITH', 'HAS_PERFORMANCE'],
         # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
-        'doc_vector_index': 'paper_abstract_embedding',  # Paper 노드(abstract 기반) 벡터 인덱스
+        'doc_vector_index': 'papersdb_doc_embedding',    # ★ 이름 변경됨 (구 paper_abstract_embedding)
         'doc_label':        'Paper',                     # 메타 노드 레이블
         'doc_body_field':   'abstract',                  # 본문 속성명 (논문 초록)
         'doc_body_label':   '초록',                       # LLM 컨텍스트에 표기할 본문 레이블
@@ -670,7 +670,7 @@ class GraphRAG:
         이건 "문서 자체"(논문 초록 / 보고서 전문)를 질문과의 유사도로 찾는다.
         → "이 주제 관련 논문/보고서 찾아줘" 류의 질의에 강하다.
 
-        paper_abstract_embedding / reportsdb_doc_embedding 인덱스는 각각
+        papersdb_doc_embedding / reportsdb_doc_embedding 인덱스는 각각
         Paper / Report 노드만 포함하므로 메타 노드 제외 필터가 필요 없다.
         """
         doc_index = cfg.get('doc_vector_index')
@@ -812,6 +812,8 @@ class GraphRAG:
         # 쿼리 문자열에 직접 끼워넣는다(값이 아니라 스키마라 파라미터화 불가).
         # body_field(content_norm 등)가 비어 있는 노드를 대비해 원본 content 로 폴백.
         # (Paper 노드엔 content 가 없으므로 COALESCE 는 자연히 body_field 값만 남긴다)
+        # ★ journal 은 Paper 노드 전용 필드(Report 에는 없음) — 없으면 null 반환되어
+        #   아래 meta_bits 에서 자연히 제외된다.
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE m.doc_id IN $ids
@@ -820,6 +822,7 @@ class GraphRAG:
                    m.author     AS author,
                    m.date       AS date,
                    m.source_url AS source_url,
+                   m.journal    AS journal,
                    COALESCE(m.{body_field}, m.content) AS body
         """
         try:
@@ -839,7 +842,7 @@ class GraphRAG:
                 body = body[:DOC_BODY_MAXLEN] + " …(생략)"
 
             header = f"- {d.get('title') or d.get('doc_id')}"
-            meta_bits = [b for b in (d.get('author'), d.get('date')) if b]
+            meta_bits = [b for b in (d.get('author'), d.get('journal'), d.get('date')) if b]
             if meta_bits:
                 header += f" ({', '.join(meta_bits)})"
             lines.append(header)
@@ -1078,8 +1081,9 @@ class GraphRAG:
 
 답변 규칙:
 - 제공된 컨텍스트와 이전 대화 내용을 적극적으로 활용하여 답하세요.
-- 컨텍스트에 author, title, source_url, date 등의 메타데이터가 있으면 반드시 활용하세요.
+- 컨텍스트에 author, title, journal, source_url, date 등의 메타데이터가 있으면 반드시 활용하세요.
 - 저자를 묻는 경우 컨텍스트의 author 값을 답하세요.
+- 게재 저널을 묻는 경우 컨텍스트의 journal 값을 답하세요.
 - 링크, 출처, URL, DOI를 묻는 경우 컨텍스트의 source_url 값을 답하세요.
 - 논문 제목을 묻는 경우 컨텍스트의 title 값을 답하세요.
 - 이전 대화에서 언급된 메타데이터도 참고하세요.
