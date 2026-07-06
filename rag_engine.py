@@ -162,7 +162,7 @@ _DEBUG_ROW_PREVIEW = 10
 #                       'reportsdb_embedding' → 'reportsdb_entity_embedding' 로 바뀜.
 #   meta_label     : ★ 신규. 같은 데이터셋 레이블(:ReportsDB)을 공유하지만
 #                    엔티티가 아닌 "메타 노드"의 레이블.
-#                    ReportsDB 엔티티 벡터 인덱스에는 Document 메타 노드도 섞여
+#                    ReportsDB 엔티티 벡터 인덱스에는 Report(구 Document) 메타 노드도 섞여
 #                    들어오므로, 벡터 검색 결과에서 이 레이블을 가진 노드를
 #                    'WHERE NOT node:<meta_label>' 로 걸러내야 한다.
 #   default_mode   : 사용자가 모드를 지정하지 않았을 때 기본 검색 모드
@@ -189,7 +189,7 @@ DATASETS: dict = {
         'has_date':       True,
         'min_confidence': None,
         'vector_index':   'reportsdb_entity_embedding',  # ★ 이름 변경됨
-        'meta_label':     'Document',                    # ★ 벡터 검색에서 제외할 메타 노드
+        'meta_label':     'Report',                      # ★ 벡터 검색에서 제외할 메타 노드 (구 Document → Report로 레이블 변경됨)
         'default_mode':   'hybrid',
         'search_hops':    None,
         # ReportsDB 인과·성능 계열 관계만 2-hop 확장 대상으로 삼는다.
@@ -197,8 +197,8 @@ DATASETS: dict = {
         'hop2_relations': ['DEPOSITED_BY', 'TREATED_BY', 'ACHIEVES',
                            'IMPROVES', 'DEGRADES', 'COMPARED_TO', 'DOPED_WITH'],
         # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
-        'doc_vector_index': 'reportsdb_doc_embedding',   # Document 노드 벡터 인덱스
-        'doc_label':        'Document',                  # 메타 노드 레이블
+        'doc_vector_index': 'reportsdb_doc_embedding',   # Report 노드 벡터 인덱스
+        'doc_label':        'Report',                    # 메타 노드 레이블 (구 Document → Report)
         # ★ content_norm: 코드(D1)를 물질명(HfO2)으로 변환한 정규화 본문.
         #   embedding 도 content_norm 기반이고 LLM 컨텍스트도 물질명으로 주는 게
         #   의미 파악에 유리하므로, 답변 컨텍스트용 본문으로 content_norm 을 쓴다.
@@ -253,7 +253,7 @@ _NO_RESULT = "관련 트리플을 찾지 못했습니다."
 
 # ★ 스키마 변경 대응: 구조(출처) 관계 타입.
 # 새 스키마는 엔티티와 메타 노드를 (entity)-[:FROM_PAPER]->(:Paper) /
-# (entity)-[:FROM_DOC]->(:Document) 로 연결한다. 그런데 Paper/Document 메타 노드도
+# (entity)-[:FROM_DOC]->(:Report) 로 연결한다. 그런데 Paper/Report 메타 노드도
 # 데이터셋 레이블(:PapersDB / :ReportsDB)을 공유하므로,
 # MATCH (s:PapersDB)-[r]->(o:PapersDB) 같은 패턴이 이 구조 관계까지 잡아버린다.
 # 이들은 "의미 트리플"이 아니라 출처 연결이므로, 검색 시 관계 타입으로 제외한다.
@@ -354,7 +354,7 @@ class GraphRAG:
             "type(r) AS rel",
             "o.name AS oname", "o.type AS otype",
             # ★ A 기능: 각 트리플이 어느 문서(doc_id)에서 나왔는지 항상 가져온다.
-            #   이 doc_id 로 나중에 Paper/Document 메타 노드를 조인해 원문을 붙인다.
+            #   이 doc_id 로 나중에 Paper/Report 메타 노드를 조인해 원문을 붙인다.
             #   (return_fields 에는 없으므로 트리플 줄에는 출력되지 않고, 내부 수집용으로만 쓰임)
             "CASE WHEN r.doc_id IS NOT NULL THEN r.doc_id ELSE '' END AS doc_id",
         ]
@@ -480,9 +480,9 @@ class GraphRAG:
 
         # ★ 스키마 변경 대응:
         #   reportsdb_entity_embedding 인덱스는 FOR (n:ReportsDB) 로 생성되는데,
-        #   Document 메타 노드도 :ReportsDB 레이블 + embedding 속성을 가지므로
-        #   이 인덱스에 함께 포함된다. 따라서 벡터 검색 결과에서 메타 노드를
-        #   'WHERE NOT s:Document' 로 제외해야 엔티티만 남는다.
+        #   Report 메타 노드(구 Document)도 :ReportsDB 레이블 + embedding 속성을
+        #   가지므로 이 인덱스에 함께 포함된다. 따라서 벡터 검색 결과에서 메타
+        #   노드를 'WHERE NOT s:Report' 로 제외해야 엔티티만 남는다.
         #   (PapersDB 는 메타 노드가 다른 속성명을 써서 애초에 안 섞이지만,
         #    일관성/안전을 위해 동일하게 필터를 건다.)
         node_filter = f"AND NOT s:{meta_label}" if meta_label else ""
@@ -663,7 +663,7 @@ class GraphRAG:
     def _doc_vector_retrieve(self, query_text: str, cfg: dict,
                              limit: int = DOC_SEARCH_LIMIT) -> list[str]:
         """
-        Paper/Document 메타 노드를 대상으로 벡터 검색을 수행해 관련 문서의
+        Paper/Report 메타 노드를 대상으로 벡터 검색을 수행해 관련 문서의
         doc_id 목록을 돌려준다.
 
         엔티티 벡터 검색(_vector_retrieve_raw)이 "관계(트리플)"를 찾는 것과 달리,
@@ -671,7 +671,7 @@ class GraphRAG:
         → "이 주제 관련 논문/보고서 찾아줘" 류의 질의에 강하다.
 
         paper_abstract_embedding / reportsdb_doc_embedding 인덱스는 각각
-        Paper / Document 노드만 포함하므로 메타 노드 제외 필터가 필요 없다.
+        Paper / Report 노드만 포함하므로 메타 노드 제외 필터가 필요 없다.
         """
         doc_index = cfg.get('doc_vector_index')
         if not doc_index:
@@ -758,7 +758,7 @@ class GraphRAG:
     def _doc_author_retrieve(self, keywords_str: str, cfg: dict,
                              limit: int = DOC_SEARCH_LIMIT) -> list[str]:
         """
-        Paper/Document 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 찾는다.
+        Paper/Report 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 찾는다.
 
         text 검색(A)은 트리플의 r.author 를 보므로 "그 저자의 트리플이 있어야"만
         찾아지고, 저자만 언급되고 트리플에 안 걸린 논문은 놓친다. 이 채널은
@@ -791,7 +791,7 @@ class GraphRAG:
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict) -> str:
         """
-        doc_id 집합을 받아 Paper/Document 메타 노드에서 제목·본문·출처를 조회하고,
+        doc_id 집합을 받아 Paper/Report 메타 노드에서 제목·본문·출처를 조회하고,
         LLM 컨텍스트에 넣을 "관련 문서" 섹션 문자열로 만든다.
 
         트리플은 (주어)-[관계]->(목적어) 형태라 근거 문장(evidence) 정도만 담지만,
