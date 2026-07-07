@@ -1126,12 +1126,24 @@ class GraphRAG:
         code_map_found = _detect_codes(query)
         code_info = ""
         if code_map_found:
-            mapping_lines = "\n".join(f"- {code} = {material}" for code, material in code_map_found.items())
+            mapping_lines = "\n".join(
+                f"- '{code}' 는 사내 코드명이며, 실제 물질명은 '{material}' 입니다."
+                for code, material in code_map_found.items()
+            )
+            example_code, example_material = next(iter(code_map_found.items()))
             code_info = f"""
 
-질문에 사용된 사내 코드명과 실제 물질명 매핑 (컨텍스트는 물질명 기준으로 제공됨):
+[사내 코드명 ↔ 실제 물질명 매핑 — 반드시 확인]
+아래 사내 코드는 질문에 사용되었지만, 검색 컨텍스트(트리플/문서)는 물질명 기준으로
+제공됩니다. 코드명과 물질명이 동일한 대상을 가리킨다는 것을 확실히 인지하고,
+둘을 별개의 것으로 혼동하지 마세요.
 {mapping_lines}
-→ 질문의 코드명이 컨텍스트의 물질명과 같은 대상을 가리킨다는 것을 인지하고 답변하세요."""
+
+답변 규칙 (코드명 관련):
+- 답변 시작 부분에서 각 코드명과 실제 물질명의 관계를 사용자에게 명확히 알려주세요.
+  예: "'{example_code}'는 사내 코드로, 실제 물질명은 '{example_material}'입니다."
+- 이후 본문에서는 컨텍스트의 물질명을 기준으로 설명하되, 필요하면
+  "{example_code}({example_material})"처럼 코드와 물질명을 함께 표기해 혼동을 줄이세요."""
 
         # ★ 디버그: LLM 프롬프트에 실제로 들어가는 "코드↔물질명 매핑" 섹션만 따로 출력.
         #   이 섹션이 비어 있으면(아래 (없음)) LLM 은 코드와 물질명을 연결하지 못한다.
