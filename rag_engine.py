@@ -318,6 +318,31 @@ class GraphRAG:
         print("[Debug] 대화 히스토리 초기화")
 
     def _extract_keywords(self, query: str) -> dict:
+        """
+        질문에서 검색 키워드/날짜 범위를 추출한다.
+
+        ★ 이전 대화(self.history)를 함께 프롬프트에 넣어, "그 사람", "그 연구원",
+        "그거"처럼 이름을 생략하고 되묻는 후속 질문에서도 실제 키워드(예: 연구원 이름)를
+        복원해 추출한다. 이게 없으면 후속 질문이 검색 단계에서 빈손이 되어(원래
+        키워드가 현재 질문 텍스트에 없으므로) 검색 결과가 안 나오는 문제가 있었다.
+        LLM 답변 자체는 self.history 전체를 이미 참고하지만, "검색용 키워드 추출"은
+        지금까지 이 히스토리를 안 보고 있었다.
+        """
+        # 최근 대화 몇 턴만 넣는다 (전체를 넣으면 프롬프트가 길어지고, 오래된 맥락은
+        # 지금 질문의 지칭 대상과 무관할 가능성이 높다).
+        recent_turns = self.history[-(MAX_HISTORY_TURNS * 2):] if self.history else []
+        if recent_turns:
+            history_lines = "\n".join(
+                f"{'사용자' if m['role'] == 'user' else 'AI'}: {m['content']}"
+                for m in recent_turns
+            )
+            history_block = f"""
+[이전 대화 — 지칭 표현(그 사람/그거/그 연구원 등) 해석에 참고]
+{history_lines}
+"""
+        else:
+            history_block = ""
+
         today     = datetime.today()
         today_str = today.strftime("%Y-%m-%d")
         m3_ago    = (today - timedelta(days=90)).strftime("%Y-%m-%d")
@@ -326,7 +351,7 @@ class GraphRAG:
         y2_ago    = (today - timedelta(days=730)).strftime("%Y-%m-%d")
 
         extract_prompt = f"""다음 질문에서 검색 키워드와 날짜 범위를 추출하세요.
-
+{history_block}
 오늘 날짜: {today_str}
 자주 쓰는 날짜 참고:
 - 최근 3개월 이내: {m3_ago} ~ {today_str}
@@ -356,6 +381,11 @@ class GraphRAG:
 3. 관련 동의어/유사어도 포함
 4. 날짜 관련 표현은 키워드에서 제외
 5. 저자/작성자 이름이 언급되면 반드시 키워드에 그대로 포함 (예: "Tao Li가 쓴 논문" → "Tao Li")
+6. 질문에 "그 사람", "그거", "그 연구원", "이거" 처럼 대상이 생략되거나 대명사로만
+   지칭된 경우, [이전 대화]를 참고해 실제로 무엇/누구를 가리키는지 찾아내고
+   그 구체적인 이름/명칭을 키워드에 포함하세요.
+   예: 이전 대화에서 "Tao Li" 가 언급됐고, 이번 질문이 "그 사람의 다른 논문도 있어?"
+   라면 → keywords 에 "Tao Li" 를 포함해야 함.
 
 질문: {query}
 출력:"""
