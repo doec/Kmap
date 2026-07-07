@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from neo4j import GraphDatabase
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 import logging
 logging.getLogger("neo4j").setLevel(logging.ERROR)
@@ -406,7 +406,8 @@ class GraphRAG:
   "keywords": "키워드1, 키워드2, ...",
   "date_from": "YYYY-MM-DD 또는 null",
   "date_to": "YYYY-MM-DD 또는 null",
-  "recency_focus": true 또는 false
+  "recency_focus": true 또는 false,
+  "week": "YYYY-WNN 또는 null"
 }}
 
 날짜 변환 규칙:
@@ -417,6 +418,12 @@ class GraphRAG:
 - "최근 N년" → 오늘 기준 N년 전 날짜 계산
 - "올해" → date_from: "{today.year}-01-01", date_to: "{today_str}"
 - 날짜 언급 없음 → date_from: null, date_to: null
+
+week 판단 규칙 (내부 문서 ReportsDB/Confluence 는 주차로 관리됨 — 매우 중요):
+- "2026년 26주차", "2026-W26", "26주차"(올해로 간주) 처럼 특정 연도+주차가
+  언급되면 → week: "YYYY-WNN" 형식으로 추출 (예: "2026-W26", 주차는 2자리 0-패딩).
+- 연도 없이 "26주차"만 언급되면 오늘 연도({today.year})를 사용하세요.
+- 주차 언급이 없으면 → week: null
 
 recency_focus 판단 규칙 (매우 중요):
 - "가장 최근", "제일 최근", "최신", "최근 결과", "요즘" 처럼 구체적인 기간(개월/년) 없이
@@ -456,15 +463,43 @@ recency_focus 판단 규칙 (매우 중요):
                      .removesuffix("```")
                      .strip())
             parsed = json.loads(clean)
+
+            # ★ week 값 검증/정규화 ("YYYY-WNN", 주차 2자리 0-패딩). 형식이 안 맞으면
+            #   무시(None) — LLM 이 가끔 다른 포맷으로 줄 수 있어 방어적으로 처리.
+            week_raw = parsed.get('week')
+            week = None
+            if week_raw:
+                m = re.match(r'^(\d{4})-W(\d{1,2})$', str(week_raw).strip())
+                if m:
+                    week = f"{m.group(1)}-W{int(m.group(2)):02d}"
+
+            date_from = parsed.get('date_from')
+            date_to   = parsed.get('date_to')
+
+            # ★ week 가 감지됐는데 date_from/date_to 가 비어 있으면, 그 주차의
+            #   월/일요일을 계산해 채워준다. 이렇게 하면 text 검색의 r.date 필터,
+            #   recency_focus 정렬 등 날짜 기반 로직도 자연스럽게 이 주차 범위를 따른다.
+            if week and not date_from and not date_to:
+                wm = re.match(r'^(\d{4})-W(\d{1,2})$', week)
+                if wm:
+                    try:
+                        y, w = int(wm.group(1)), int(wm.group(2))
+                        date_from = date.fromisocalendar(y, w, 1).isoformat()  # 월요일
+                        date_to   = date.fromisocalendar(y, w, 7).isoformat()  # 일요일
+                    except Exception as e:
+                        print(f"[Debug] 주차→날짜 범위 계산 실패: {e}")
+
             return {
                 'keywords':      parsed.get('keywords', query),
-                'date_from':     parsed.get('date_from'),
-                'date_to':       parsed.get('date_to'),
+                'date_from':     date_from,
+                'date_to':       date_to,
                 'recency_focus': bool(parsed.get('recency_focus', False)),
+                'week':          week,
             }
         except Exception as e:
             print(f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
-            return {'keywords': query, 'date_from': None, 'date_to': None, 'recency_focus': False}
+            return {'keywords': query, 'date_from': None, 'date_to': None,
+                    'recency_focus': False, 'week': None}
 
     def _build_return_clause(self, return_fields: list) -> str:
         base = [
@@ -979,6 +1014,36 @@ recency_focus 판단 규칙 (매우 중요):
             print(f"[Debug] 저자 검색 실패: {e}")
             return []
 
+    # ── E 기능: 주차(week)로 문서 정확 매칭 검색 ─────────────────────────────────
+    def _doc_week_retrieve(self, week: str, cfg: dict) -> list[str]:
+        """
+        Report/Confl_doc 메타 노드의 week 속성을 정확히(exact match) 검색한다.
+
+        "2026년 26주차 보고내용 보여줘" 같은 질문은 "관련도 상위 몇 개"가 아니라
+        "그 주차에 해당하는 문서 전부"를 원하는 열거형(enumeration) 질문이다.
+        B(벡터)/C(FULLTEXT)는 관련도 기준이라 한 문서가 순위에서 밀려 누락될 수
+        있으므로, D(저자)와 마찬가지로 필드를 정확히 매칭하는 전용 채널을 둔다.
+        LIMIT 을 두지 않는다 — 특정 주차의 문서 수는 원래 적으므로 전부 반환해도
+        컨텍스트 폭주 위험이 낮다.
+        """
+        doc_label = cfg.get('doc_label')
+        if not doc_label or not week:
+            return []
+
+        query_str = f"""
+            MATCH (m:{doc_label})
+            WHERE m.week = $week
+            RETURN m.doc_id AS doc_id
+            ORDER BY m.date DESC
+        """
+        try:
+            with self.driver.session() as session:
+                rows = [dict(r) for r in session.run(query_str, week=week)]
+            return [r['doc_id'] for r in rows if r.get('doc_id')]
+        except Exception as e:
+            print(f"[Debug] 주차 검색 실패: {e}")
+            return []
+
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict,
                          recency_focus: bool = False) -> str:
@@ -1067,7 +1132,8 @@ recency_focus 판단 규칙 (매우 중요):
                  limit: int = DEFAULT_SEARCH_LIMIT,
                  date_from: str = None,
                  date_to: str = None,
-                 recency_focus: bool = False) -> str:
+                 recency_focus: bool = False,
+                 week: str = None) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -1175,9 +1241,11 @@ recency_focus 판단 규칙 (매우 중요):
         ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if requested_mode in ('vector', 'hybrid') else set()   # B
         ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if requested_mode in ('text', 'hybrid') else set()  # C
         ids_d = set(self._doc_author_retrieve(keywords_str, cfg))       # D: 저자명 직접 검색 (모든 모드)
-        doc_ids = ids_a | ids_b | ids_c | ids_d
+        ids_e = set(self._doc_week_retrieve(week, cfg))                 # E: 주차 정확 매칭 (모든 모드)
+        doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
         print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
-              f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} → 합집합 {len(doc_ids)}")
+              f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
+              f"E(주차)={len(ids_e)} → 합집합 {len(doc_ids)}")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus)
         if doc_ids and not docs_ctx:
@@ -1220,10 +1288,12 @@ recency_focus 판단 규칙 (매우 중요):
         date_from          = extracted['date_from']
         date_to            = extracted['date_to']
         recency_focus      = extracted['recency_focus']
+        week               = extracted['week']
 
         print(f"[Debug] 추출된 키워드: {extracted_keywords}")
         print(f"[Debug] 날짜 범위: {date_from} ~ {date_to}")
         print(f"[Debug] 최신순 정렬 필요: {recency_focus}")
+        print(f"[Debug] 감지된 주차: {week}")
 
         if dataset and dataset != 'All' and dataset in DATASETS:
             search_targets = [dataset]
@@ -1243,7 +1313,7 @@ recency_focus 판단 규칙 (매우 중요):
                 ds: executor.submit(
                     self.retrieve,
                     extracted_keywords, query, ds, mode,
-                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus
+                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, week
                 )
                 for ds in search_targets
             }
