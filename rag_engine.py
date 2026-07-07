@@ -569,7 +569,12 @@ recency_focus 판단 규칙 (매우 중요):
           LIMIT 에 걸려 짤린 "진짜로 최신인데 confidence 가 낮은" 트리플을
           영영 놓치게 된다.
         """
-        keywords      = keywords_str.replace(",", " ").split()
+        # ★ 쉼표로만 나눈다 (공백 분리 X). "Lee Changsoo" 처럼 여러 단어로 된 키워드가
+        #   "Lee" / "Changsoo" 로 쪼개지면, CONTAINS 매칭이 "Lee"라는 흔한 성씨 하나만
+        #   으로도 걸려서 전혀 다른 사람(예: "Lee Jaeho")까지 잘못 매칭되는 문제가 있었다.
+        #   (마찬가지로 "La doping" 같은 두 단어 물질명도 "La"/"doping" 각각으로 쪼개지면
+        #   너무 광범위하게 매칭되는 문제가 있었음 — 이 문제도 함께 해결됨)
+        keywords      = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
         return_fields = cfg['return_fields']
         return_clause = self._build_return_clause(return_fields)
         where_parts, params = self._build_where(cfg, keywords, date_from, date_to)
@@ -894,11 +899,13 @@ recency_focus 판단 규칙 (매우 중요):
         if isinstance(ft_indexes, str):
             ft_indexes = [ft_indexes]
 
+        # ★ 쉼표로만 나눈다 (공백 분리 X) — "Lee Changsoo" 같은 여러 단어 키워드가
+        #   쪼개지지 않도록 (자세한 이유는 _text_retrieve_raw 주석 참고).
         # Lucene 질의 문자열 구성:
         # 키워드에 '/'·'-' 등 Lucene 특수문자가 있으면 파싱 오류가 나므로,
         # 각 키워드를 큰따옴표로 감싼 구(phrase)로 만들고 내부 특수문자는 이스케이프한다.
         # 따옴표로 감싼 구들을 공백으로 이으면 Lucene 기본 OR(should) 매칭이 된다.
-        keywords = [kw.strip() for kw in keywords_str.replace(",", " ").split() if kw.strip()]
+        keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
         if not keywords:
             return []
 
@@ -939,7 +946,10 @@ recency_focus 판단 규칙 (매우 중요):
         if not doc_label or not keywords_str:
             return []
 
-        keywords = [kw.strip() for kw in keywords_str.replace(",", " ").split() if kw.strip()]
+        # ★ 쉼표로만 나눈다 (공백 분리 X) — "Lee Changsoo" 가 "Lee"/"Changsoo" 로
+        #   쪼개지면 "Lee"라는 흔한 성씨 하나만으로도 매칭돼 전혀 다른 사람의
+        #   문서까지 걸리는 문제가 있었다 (자세한 이유는 _text_retrieve_raw 주석 참고).
+        keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
         if not keywords:
             return []
 
