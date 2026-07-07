@@ -900,8 +900,8 @@ class GraphRAG:
         # 쿼리 문자열에 직접 끼워넣는다(값이 아니라 스키마라 파라미터화 불가).
         # body_field(content_norm 등)가 비어 있는 노드를 대비해 원본 content 로 폴백.
         # (Paper 노드엔 content 가 없으므로 COALESCE 는 자연히 body_field 값만 남긴다)
-        # ★ journal 은 Paper 노드 전용 필드(Report 에는 없음) — 없으면 null 반환되어
-        #   아래 meta_bits 에서 자연히 제외된다.
+        # ★ journal 은 Paper 노드 전용, week 는 Confl_doc 노드 전용 필드
+        #   (다른 데이터셋엔 없으면 null 반환되어 meta_bits 에서 자연히 제외된다).
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE m.doc_id IN $ids
@@ -911,6 +911,7 @@ class GraphRAG:
                    m.date       AS date,
                    m.source_url AS source_url,
                    m.journal    AS journal,
+                   m.week       AS week,
                    COALESCE(m.{body_field}, m.content) AS body
         """
         try:
@@ -930,7 +931,11 @@ class GraphRAG:
                 body = body[:DOC_BODY_MAXLEN] + " …(생략)"
 
             header = f"- {d.get('title') or d.get('doc_id')}"
-            meta_bits = [b for b in (d.get('author'), d.get('journal'), d.get('date')) if b]
+            # ★ Confluence 문서는 date 옆에 몇 주차인지(week, 예: "2026-W02")도 함께 표기.
+            date_bit = d.get('date')
+            if date_bit and d.get('week'):
+                date_bit = f"{date_bit}, {d['week']}"
+            meta_bits = [b for b in (d.get('author'), d.get('journal'), date_bit) if b]
             if meta_bits:
                 header += f" ({', '.join(meta_bits)})"
             lines.append(header)
@@ -1198,9 +1203,18 @@ class GraphRAG:
 - 논문 제목을 묻는 경우 컨텍스트의 "제목" 값을 답하세요.
 - 컨텍스트의 필드 라벨(근거, 출처, 제목, 저자, 저널, 날짜 등)은 답변 문장에 그대로
   베껴 쓰지 말고, 자연스러운 한국어 문장으로 풀어서 답하세요.
+- Confluence 문서의 날짜를 답할 때는 날짜와 함께 몇 주차 문서인지(예: 2026-W02)도
+  컨텍스트에 있으면 함께 답하세요.
 - 이전 대화에서 언급된 메타데이터도 참고하세요.
 - 컨텍스트와 이전 대화 모두에 없는 내용만 모른다고 답하세요.
-- 답변은 한국어로 작성하세요."""
+- 답변은 한국어로 작성하세요.
+
+링크 작성 규칙 (중요):
+- URL/링크는 마크다운 굵게(**) 표시를 절대 사용하지 마세요. "**https://...**" 같은
+  형태는 링크 인식이 깨져 클릭할 수 없게 됩니다.
+- 링크 앞뒤에는 반드시 공백이나 줄바꿈을 두세요. 단어나 문장부호를 링크에 바로
+  붙여 쓰지 마세요 (예: "자세한내용은https://example.com참고" ❌).
+- 링크는 그냥 URL 그대로 쓰거나 마크다운 링크 형식 [설명](URL) 으로 쓰세요."""
 
         user_message_content = f"""[추출된 키워드]
 {extracted_keywords}

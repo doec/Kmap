@@ -11,17 +11,30 @@ from retriever.neo4j_retriever import Neo4jRetriever
 
 # ── linkify: 답변 텍스트의 맨 URL / DOI 를 마크다운 링크로 변환 ───────────────────────────────
 # 이미 마크다운 링크 형태( ](url) , <url> )인 것은 건드리지 않는다.
-_BARE_URL_RE = re.compile(r'(?<![\(\[<"\'=/])(https?://[^\s<>\)\]]+[^\s<>\)\].,;:!?\'"])')
-_DOI_RE      = re.compile(r'(?<![\w/.])(?:doi:\s*)?(10\.\d{4,9}/[^\s<>\)\]]+[^\s<>\)\].,;:!?\'"])', re.IGNORECASE)
+#
+# ★ LLM이 "**https://...**"처럼 URL을 마크다운 굵게(**)로 감싸거나, 뒤에 다른 글자를
+#   공백 없이 붙여 쓰는 경우가 있었다. 이러면 (a) URL 문자열 자체에 '**'가 섞여
+#   링크 target 이 깨지거나, (b) 렌더링이 이상해져 클릭이 안 됐다.
+#   대응:
+#     1. URL 앞뒤에 붙은 '**'는 (?:\*\*)? 로 함께 소비해서 결과에서 제거한다.
+#     2. URL 문자 집합에서 '*' 를 제외해, 중간에 낀 '*' 도 URL로 안 삼켜지게 한다
+#        (그 지점에서 URL 매칭이 끝나 나머지는 링크 밖 텍스트로 남는다).
+_BARE_URL_RE = re.compile(
+    r'(?:\*\*)?(?<![\(\[<"\'=/])(https?://[^\s<>\)\]*]+[^\s<>\)\].,;:!?\'"*])(?:\*\*)?'
+)
+_DOI_RE = re.compile(
+    r'(?:\*\*)?(?<![\w/.])((?:doi:\s*)?(10\.\d{4,9}/[^\s<>\)\]*]+[^\s<>\)\].,;:!?\'"*]))(?:\*\*)?',
+    re.IGNORECASE
+)
 
 
 def _linkify(text: str) -> str:
-    """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다."""
+    """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다. (URL에 붙은 ** 제거)"""
     if not text:
         return text
     text = _BARE_URL_RE.sub(lambda m: f'[{m.group(1)}]({m.group(1)})', text)
     text = _DOI_RE.sub(
-        lambda m: f'[{m.group(0)}](https://doi.org/{m.group(1)})', text
+        lambda m: f'[{m.group(1)}](https://doi.org/{m.group(2)})', text
     )
     return text
 
