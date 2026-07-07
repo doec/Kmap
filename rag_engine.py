@@ -423,7 +423,7 @@ class GraphRAG:
   "date_from": "YYYY-MM-DD 또는 null",
   "date_to": "YYYY-MM-DD 또는 null",
   "recency_focus": true 또는 false,
-  "week": "YYYY-WNN 또는 null"
+  "year_week": "YYYY-WNN 또는 null"
 }}
 
 날짜 변환 규칙:
@@ -444,11 +444,11 @@ target_datasets 판단 규칙 (매우 중요):
   전부 포함하세요 (좁혀서 놓치는 것보다 넓게 잡는 게 안전합니다).
 - 이전 대화의 맥락(예: 이전에 특정 데이터셋 관련 대상이 언급됨)도 참고하세요.
 
-week 판단 규칙 (내부 문서 ReportsDB/Confluence 는 주차로 관리됨 — 매우 중요):
+year_week 판단 규칙 (내부 문서 ReportsDB/Confluence 는 주차로 관리됨 — 매우 중요):
 - "2026년 26주차", "2026-W26", "26주차"(올해로 간주) 처럼 특정 연도+주차가
-  언급되면 → week: "YYYY-WNN" 형식으로 추출 (예: "2026-W26", 주차는 2자리 0-패딩).
+  언급되면 → year_week: "YYYY-WNN" 형식으로 추출 (예: "2026-W26", 주차는 2자리 0-패딩).
 - 연도 없이 "26주차"만 언급되면 오늘 연도({today.year})를 사용하세요.
-- 주차 언급이 없으면 → week: null
+- 주차 언급이 없으면 → year_week: null
 
 recency_focus 판단 규칙 (매우 중요):
 - "가장 최근", "제일 최근", "최신", "최근 결과", "요즘" 처럼 구체적인 기간(개월/년) 없이
@@ -489,25 +489,25 @@ recency_focus 판단 규칙 (매우 중요):
                      .strip())
             parsed = json.loads(clean)
 
-            # ★ week 값 검증/정규화 ("YYYY-WNN", 주차 2자리 0-패딩). 형식이 안 맞으면
+            # ★ year_week 값 검증/정규화 ("YYYY-WNN", 주차 2자리 0-패딩). 형식이 안 맞으면
             #   무시(None) — LLM 이 가끔 다른 포맷으로 줄 수 있어 방어적으로 처리.
-            week_raw = parsed.get('week')
-            week = None
-            if week_raw:
+            year_week_raw = parsed.get('year_week')
+            year_week = None
+            if year_week_raw:
                 # LLM 이 대/소문자 'w' 어느 쪽으로 주든 허용 (내부적으로는 대문자로 통일;
                 # 실제 DB 비교는 toLower() 로 하므로 대소문자 자체는 무관함)
-                m = re.match(r'^(\d{4})-W(\d{1,2})$', str(week_raw).strip(), re.IGNORECASE)
+                m = re.match(r'^(\d{4})-W(\d{1,2})$', str(year_week_raw).strip(), re.IGNORECASE)
                 if m:
-                    week = f"{m.group(1)}-W{int(m.group(2)):02d}"
+                    year_week = f"{m.group(1)}-W{int(m.group(2)):02d}"
 
             date_from = parsed.get('date_from')
             date_to   = parsed.get('date_to')
 
-            # ★ week 가 감지됐는데 date_from/date_to 가 비어 있으면, 그 주차의
+            # ★ year_week 가 감지됐는데 date_from/date_to 가 비어 있으면, 그 주차의
             #   월/일요일을 계산해 채워준다. 이렇게 하면 text 검색의 r.date 필터,
             #   recency_focus 정렬 등 날짜 기반 로직도 자연스럽게 이 주차 범위를 따른다.
-            if week and not date_from and not date_to:
-                wm = re.match(r'^(\d{4})-W(\d{1,2})$', week)
+            if year_week and not date_from and not date_to:
+                wm = re.match(r'^(\d{4})-W(\d{1,2})$', year_week)
                 if wm:
                     try:
                         y, w = int(wm.group(1)), int(wm.group(2))
@@ -531,13 +531,13 @@ recency_focus 판단 규칙 (매우 중요):
                 'date_from':       date_from,
                 'date_to':         date_to,
                 'recency_focus':   bool(parsed.get('recency_focus', False)),
-                'week':            week,
+                'year_week':       year_week,
                 'target_datasets': target_datasets,
             }
         except Exception as e:
             print(f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
             return {'keywords': query, 'date_from': None, 'date_to': None,
-                    'recency_focus': False, 'week': None,
+                    'recency_focus': False, 'year_week': None,
                     'target_datasets': list(DATASETS.keys())}
 
     def _build_return_clause(self, return_fields: list) -> str:
@@ -549,12 +549,11 @@ recency_focus 판단 규칙 (매우 중요):
             #   이 doc_id 로 나중에 Paper/Report 메타 노드를 조인해 원문을 붙인다.
             #   (return_fields 에는 없으므로 트리플 줄에는 출력되지 않고, 내부 수집용으로만 쓰임)
             "CASE WHEN r.doc_id IS NOT NULL THEN r.doc_id ELSE '' END AS doc_id",
-            # ★ ReportsDB 는 트리플 생성 시점부터 관계에 year_week(DB 속성명)를
-            #   직접 저장해 두었으므로 (date 로부터 재계산하지 않고) 저장된 값을 그대로
-            #   쓴다. year_week 가 없는 데이터셋의 관계는 그냥 빈 문자열이 되어
-            #   _format_rows 에서 date 로 폴백된다. (내부적으로는 'week' 라는
-            #   별칭(alias)으로 다루므로, 이 아래 코드는 바뀔 필요 없다.)
-            "CASE WHEN r.year_week IS NOT NULL THEN r.year_week ELSE '' END AS week",
+            # ★ ReportsDB 는 트리플 생성 시점부터 관계에 year_week 를 직접 저장해
+            #   두었으므로 (date 로부터 재계산하지 않고) 저장된 값을 그대로 쓴다.
+            #   year_week 가 없는 데이터셋의 관계는 그냥 빈 문자열이 되어
+            #   _format_rows 에서 date 로 폴백된다.
+            "CASE WHEN r.year_week IS NOT NULL THEN r.year_week ELSE '' END AS year_week",
         ]
         fields = [
             f"CASE WHEN r.{f} IS NOT NULL THEN r.{f} ELSE '' END AS {f}"
@@ -624,11 +623,11 @@ recency_focus 판단 규칙 (매우 중요):
                     value = r[f]
                     # ★ ReportsDB/Confluence 는 정확한 날짜 대신 "몇 주차"로 표시
                     #   (date_as_week=True 인 데이터셋만; PapersDB 는 그대로 날짜 유지)
-                    #   관계에 저장된 r.year_week(별칭 'week')가 있으면 그 값을 그대로
-                    #   신뢰하고(재계산 없음), 없으면 date 로부터 계산한다 (doc_id 처럼
-                    #   week 도 base 필드로 항상 조회됨).
+                    #   관계에 저장된 r.year_week 가 있으면 그 값을 그대로 신뢰하고
+                    #   (재계산 없음), 없으면 date 로부터 계산한다 (doc_id 처럼 year_week
+                    #   도 base 필드로 항상 조회됨).
                     if f == 'date' and date_as_week:
-                        value = (_stored_week_to_label(r['week']) if r.get('week')
+                        value = (_stored_week_to_label(r['year_week']) if r.get('year_week')
                                  else _date_to_week_label(value))
                     line += f"\n  {label}: {value}"
             lines.append(line)
@@ -1057,9 +1056,9 @@ recency_focus 판단 규칙 (매우 중요):
             return []
 
     # ── E 기능: 주차(week)로 문서 정확 매칭 검색 ─────────────────────────────────
-    def _doc_week_retrieve(self, week: str, cfg: dict) -> list[str]:
+    def _doc_week_retrieve(self, year_week: str, cfg: dict) -> list[str]:
         """
-        Report/Confl_doc 메타 노드의 week 속성을 정확히(exact match) 검색한다.
+        Report/Confl_doc 메타 노드의 year_week 속성을 정확히(exact match) 검색한다.
 
         "2026년 26주차 보고내용 보여줘" 같은 질문은 "관련도 상위 몇 개"가 아니라
         "그 주차에 해당하는 문서 전부"를 원하는 열거형(enumeration) 질문이다.
@@ -1069,7 +1068,7 @@ recency_focus 판단 규칙 (매우 중요):
         컨텍스트 폭주 위험이 낮다.
         """
         doc_label = cfg.get('doc_label')
-        if not doc_label or not week:
+        if not doc_label or not year_week:
             return []
 
         # ★ Cypher 문자열 비교는 대소문자를 구분한다. DB에는 소문자 'w'로 저장돼
@@ -1077,13 +1076,13 @@ recency_focus 판단 규칙 (매우 중요):
         #   toLower() 로 양쪽을 맞춰 대소문자와 무관하게 매칭한다.
         query_str = f"""
             MATCH (m:{doc_label})
-            WHERE toLower(m.year_week) = toLower($week)
+            WHERE toLower(m.year_week) = toLower($year_week)
             RETURN m.doc_id AS doc_id
             ORDER BY m.date DESC
         """
         try:
             with self.driver.session() as session:
-                rows = [dict(r) for r in session.run(query_str, week=week)]
+                rows = [dict(r) for r in session.run(query_str, year_week=year_week)]
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
             print(f"[Debug] 주차 검색 실패: {e}")
@@ -1117,8 +1116,7 @@ recency_focus 판단 규칙 (매우 중요):
         # 쿼리 문자열에 직접 끼워넣는다(값이 아니라 스키마라 파라미터화 불가).
         # body_field(content_norm 등)가 비어 있는 노드를 대비해 원본 content 로 폴백.
         # (Paper 노드엔 content 가 없으므로 COALESCE 는 자연히 body_field 값만 남긴다)
-        # ★ journal 은 Paper 노드 전용, year_week(DB 속성명, 내부적으로는 'week' 별칭
-        #   으로 다룸)는 Report/Confl_doc 노드 전용 필드
+        # ★ journal 은 Paper 노드 전용, year_week 는 Report/Confl_doc 노드 전용 필드
         #   (다른 데이터셋엔 없으면 null 반환되어 meta_bits 에서 자연히 제외된다).
         order_clause = "ORDER BY m.date DESC" if recency_focus else ""
         query_str = f"""
@@ -1130,7 +1128,7 @@ recency_focus 판단 규칙 (매우 중요):
                    m.date       AS date,
                    m.source_url AS source_url,
                    m.journal    AS journal,
-                   m.year_week  AS week,
+                   m.year_week  AS year_week,
                    COALESCE(m.{body_field}, m.content) AS body
             {order_clause}
         """
@@ -1152,11 +1150,12 @@ recency_focus 판단 규칙 (매우 중요):
 
             header = f"- {d.get('title') or d.get('doc_id')}"
             # ★ 내부 문서(ReportsDB/Confluence)는 정확한 날짜 대신 주차로 표시.
-            #   - Confluence: 저장된 week 속성을 재포맷 ("2026-W02" → "2026년 W02")
-            #   - ReportsDB: week 속성이 없으므로 date 로부터 계산
+            #   - year_week 속성이 있으면 재포맷 ("2026-W02" → "2026년 W02")
+            #   - 없으면 date 로부터 계산
             #   - PapersDB 등 date_as_week 가 아닌 데이터셋: 날짜 그대로 표시
             if cfg.get('date_as_week'):
-                date_bit = _stored_week_to_label(d['week']) if d.get('week') else _date_to_week_label(d.get('date'))
+                date_bit = (_stored_week_to_label(d['year_week']) if d.get('year_week')
+                           else _date_to_week_label(d.get('date')))
             else:
                 date_bit = d.get('date')
             meta_bits = [b for b in (d.get('author'), d.get('journal'), date_bit) if b]
@@ -1179,7 +1178,7 @@ recency_focus 판단 규칙 (매우 중요):
                  date_from: str = None,
                  date_to: str = None,
                  recency_focus: bool = False,
-                 week: str = None) -> str:
+                 year_week: str = None) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -1287,7 +1286,7 @@ recency_focus 판단 규칙 (매우 중요):
         ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if requested_mode in ('vector', 'hybrid') else set()   # B
         ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if requested_mode in ('text', 'hybrid') else set()  # C
         ids_d = set(self._doc_author_retrieve(keywords_str, cfg))       # D: 저자명 직접 검색 (모든 모드)
-        ids_e = set(self._doc_week_retrieve(week, cfg))                 # E: 주차 정확 매칭 (모든 모드)
+        ids_e = set(self._doc_week_retrieve(year_week, cfg))             # E: 주차 정확 매칭 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
         print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
@@ -1334,13 +1333,13 @@ recency_focus 판단 규칙 (매우 중요):
         date_from          = extracted['date_from']
         date_to            = extracted['date_to']
         recency_focus      = extracted['recency_focus']
-        week               = extracted['week']
+        year_week          = extracted['year_week']
         target_datasets    = extracted['target_datasets']
 
         print(f"[Debug] 추출된 키워드: {extracted_keywords}")
         print(f"[Debug] 날짜 범위: {date_from} ~ {date_to}")
         print(f"[Debug] 최신순 정렬 필요: {recency_focus}")
-        print(f"[Debug] 감지된 주차: {week}")
+        print(f"[Debug] 감지된 주차: {year_week}")
         print(f"[Debug] LLM 선택 데이터셋: {target_datasets}")
 
         if dataset and dataset != 'All' and dataset in DATASETS:
@@ -1364,7 +1363,7 @@ recency_focus 판단 규칙 (매우 중요):
                 ds: executor.submit(
                     self.retrieve,
                     extracted_keywords, query, ds, mode,
-                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, week
+                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week
                 )
                 for ds in search_targets
             }
