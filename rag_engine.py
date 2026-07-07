@@ -471,6 +471,10 @@ recency_focus 판단 규칙 (매우 중요):
             #   이 doc_id 로 나중에 Paper/Report 메타 노드를 조인해 원문을 붙인다.
             #   (return_fields 에는 없으므로 트리플 줄에는 출력되지 않고, 내부 수집용으로만 쓰임)
             "CASE WHEN r.doc_id IS NOT NULL THEN r.doc_id ELSE '' END AS doc_id",
+            # ★ ReportsDB 는 트리플 생성 시점부터 관계에 week 를 직접 저장해 두었으므로
+            #   (date 로부터 재계산하지 않고) 저장된 값을 그대로 쓴다. week 가 없는
+            #   데이터셋의 관계는 그냥 빈 문자열이 되어 _format_rows 에서 date 로 폴백된다.
+            "CASE WHEN r.week IS NOT NULL THEN r.week ELSE '' END AS week",
         ]
         fields = [
             f"CASE WHEN r.{f} IS NOT NULL THEN r.{f} ELSE '' END AS {f}"
@@ -540,8 +544,11 @@ recency_focus 판단 규칙 (매우 중요):
                     value = r[f]
                     # ★ ReportsDB/Confluence 는 정확한 날짜 대신 "몇 주차"로 표시
                     #   (date_as_week=True 인 데이터셋만; PapersDB 는 그대로 날짜 유지)
+                    #   관계에 저장된 r.week 가 있으면 그 값을 그대로 신뢰하고(재계산 없음),
+                    #   없으면 date 로부터 계산한다 (doc_id 처럼 week 도 base 필드로 항상 조회됨).
                     if f == 'date' and date_as_week:
-                        value = _date_to_week_label(value)
+                        value = (_stored_week_to_label(r['week']) if r.get('week')
+                                 else _date_to_week_label(value))
                     line += f"\n  {label}: {value}"
             lines.append(line)
         return "\n".join(lines)
