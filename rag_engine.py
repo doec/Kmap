@@ -112,7 +112,8 @@ def _stored_week_to_label(week_str: str) -> str:
     """
     if not week_str:
         return week_str
-    m = re.match(r'^(\d{4})-W(\d{1,2})$', week_str.strip())
+    # ★ DB 실제 값은 소문자 'w' (예: "2026-w26") — 대소문자 무관하게 인식
+    m = re.match(r'^(\d{4})-[Ww](\d{1,2})$', week_str.strip())
     if m:
         return f"{m.group(1)}년 W{int(m.group(2)):02d}"
     return week_str
@@ -469,7 +470,9 @@ recency_focus 판단 규칙 (매우 중요):
             week_raw = parsed.get('week')
             week = None
             if week_raw:
-                m = re.match(r'^(\d{4})-W(\d{1,2})$', str(week_raw).strip())
+                # LLM 이 대/소문자 'w' 어느 쪽으로 주든 허용 (내부적으로는 대문자로 통일;
+                # 실제 DB 비교는 toLower() 로 하므로 대소문자 자체는 무관함)
+                m = re.match(r'^(\d{4})-W(\d{1,2})$', str(week_raw).strip(), re.IGNORECASE)
                 if m:
                     week = f"{m.group(1)}-W{int(m.group(2)):02d}"
 
@@ -1030,9 +1033,12 @@ recency_focus 판단 규칙 (매우 중요):
         if not doc_label or not week:
             return []
 
+        # ★ Cypher 문자열 비교는 대소문자를 구분한다. DB에는 소문자 'w'로 저장돼
+        #   있는데(예: "2026-w26") 우리 쪽 정규화는 대문자 'W'를 쓰므로,
+        #   toLower() 로 양쪽을 맞춰 대소문자와 무관하게 매칭한다.
         query_str = f"""
             MATCH (m:{doc_label})
-            WHERE m.week = $week
+            WHERE toLower(m.week) = toLower($week)
             RETURN m.doc_id AS doc_id
             ORDER BY m.date DESC
         """
