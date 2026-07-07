@@ -72,6 +72,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# httpx 가 매 요청마다 "HTTP Request: POST ... 200 OK" 를 INFO 레벨로 찍는데,
+# basicConfig 의 level=INFO 가 httpx 로거에도 그대로 적용되어 매 LLM 호출마다
+# 출력된다. 요청 성공 로그는 불필요한 잡음이므로 httpx 로거만 WARNING 이상으로 올려
+# 에러(연결 실패 등)만 보이게 한다.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # .env의 LLM 값이 ask_llm(..., llm=None) 호출 시 기본값으로 사용됨
 LLM = os.getenv("LLM", "gpt-prod")
 logger.info(f"LLM model (default): {LLM}")
