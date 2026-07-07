@@ -86,6 +86,37 @@ def _detect_codes(text: str) -> dict:
             found[code] = material
     return found
 
+
+def _date_to_week_label(date_str: str) -> str:
+    """
+    'YYYY-MM-DD' 날짜 문자열을 ISO 주차 표기 'YYYY년 WNN' 로 변환한다.
+    (ReportsDB 는 week 속성이 별도로 없어 date 로부터 계산해야 한다)
+    파싱 실패 시 원본 문자열을 그대로 반환한다(안전 폴백).
+    """
+    if not date_str:
+        return date_str
+    try:
+        d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+        iso_year, iso_week, _ = d.isocalendar()
+        return f"{iso_year}년 W{iso_week:02d}"
+    except Exception:
+        return date_str
+
+
+def _stored_week_to_label(week_str: str) -> str:
+    """
+    Confluence 의 저장된 week 속성('2026-W02' 형식)을 'YYYY년 WNN' 표기로 재포맷한다.
+    (계산이 아니라 저장된 값을 그대로 신뢰 — 적재 시점 기준이 Python isocalendar 와
+    다를 수 있으므로 재계산하지 않고 표기만 바꾼다)
+    형식이 안 맞으면 원본을 그대로 반환한다(안전 폴백).
+    """
+    if not week_str:
+        return week_str
+    m = re.match(r'^(\d{4})-W(\d{1,2})$', week_str.strip())
+    if m:
+        return f"{m.group(1)}년 W{int(m.group(2)):02d}"
+    return week_str
+
 from dotenv import load_dotenv
 import os
 
@@ -195,6 +226,10 @@ DATASETS: dict = {
         'return_fields':  ['evidence', 'confidence', 'source_url', 'title', 'author', 'date'],
         'search_fields':  ['s.name', 'o.name', 'r.evidence', 'r.title', 'r.author'],
         'has_date':       True,
+        # ★ 내부 문서(사내 주간보고)는 정확한 날짜보다 "몇 주차"로 얘기하는 게
+        #   실무 관례에 맞아서, 날짜 표시 시 date 대신 주차(예: "2026년 W02")로
+        #   변환해서 보여준다. (PapersDB 논문은 그대로 정확한 날짜를 유지)
+        'date_as_week':   True,
         'min_confidence': None,
         'vector_index':   'reportsdb_entity_embedding',  # ★ 이름 변경됨
         'meta_label':     'Report',                      # ★ 벡터 검색에서 제외할 메타 노드 (구 Document → Report로 레이블 변경됨)
@@ -268,6 +303,9 @@ DATASETS: dict = {
         'return_fields':  ['evidence', 'confidence', 'source_url', 'title', 'author', 'date'],
         'search_fields':  ['s.name', 'o.name', 'r.evidence'],
         'has_date':       True,
+        # ★ ReportsDB 와 마찬가지로 정확한 날짜보다 "몇 주차" 로 얘기하는 게
+        #   실무 관례에 맞아서, 날짜 표시 시 date 대신 주차로 변환해서 보여준다.
+        'date_as_week':   True,
         'min_confidence': None,
         'default_mode':   'hybrid',
         'search_hops':    None,
@@ -483,7 +521,7 @@ recency_focus 판단 규칙 (매우 중요):
         'date':        '날짜',
     }
 
-    def _format_rows(self, rows: list, return_fields: list) -> str:
+    def _format_rows(self, rows: list, return_fields: list, date_as_week: bool = False) -> str:
         if not rows:
             return _NO_RESULT
 
@@ -499,7 +537,12 @@ recency_focus 판단 규칙 (매우 중요):
             for f in return_fields:
                 if f != 'confidence' and r.get(f):
                     label = self._FIELD_LABELS.get(f, f)
-                    line += f"\n  {label}: {r[f]}"
+                    value = r[f]
+                    # ★ ReportsDB/Confluence 는 정확한 날짜 대신 "몇 주차"로 표시
+                    #   (date_as_week=True 인 데이터셋만; PapersDB 는 그대로 날짜 유지)
+                    if f == 'date' and date_as_week:
+                        value = _date_to_week_label(value)
+                    line += f"\n  {label}: {value}"
             lines.append(line)
         return "\n".join(lines)
 
@@ -969,10 +1012,14 @@ recency_focus 판단 규칙 (매우 중요):
                 body = body[:DOC_BODY_MAXLEN] + " …(생략)"
 
             header = f"- {d.get('title') or d.get('doc_id')}"
-            # ★ Confluence 문서는 date 옆에 몇 주차인지(week, 예: "2026-W02")도 함께 표기.
-            date_bit = d.get('date')
-            if date_bit and d.get('week'):
-                date_bit = f"{date_bit}, {d['week']}"
+            # ★ 내부 문서(ReportsDB/Confluence)는 정확한 날짜 대신 주차로 표시.
+            #   - Confluence: 저장된 week 속성을 재포맷 ("2026-W02" → "2026년 W02")
+            #   - ReportsDB: week 속성이 없으므로 date 로부터 계산
+            #   - PapersDB 등 date_as_week 가 아닌 데이터셋: 날짜 그대로 표시
+            if cfg.get('date_as_week'):
+                date_bit = _stored_week_to_label(d['week']) if d.get('week') else _date_to_week_label(d.get('date'))
+            else:
+                date_bit = d.get('date')
             meta_bits = [b for b in (d.get('author'), d.get('journal'), date_bit) if b]
             if meta_bits:
                 header += f" ({', '.join(meta_bits)})"
@@ -1088,7 +1135,7 @@ recency_focus 판단 규칙 (매우 중요):
             rows.sort(key=lambda r: r.get('date') or '', reverse=True)
 
         # ── 트리플 컨텍스트 ─────────────────────────────────────────────────────
-        triples_ctx = self._format_rows(rows, cfg['return_fields'])
+        triples_ctx = self._format_rows(rows, cfg['return_fields'], date_as_week=cfg.get('date_as_week', False))
 
         # ── 문서 컨텍스트 (A + B) ───────────────────────────────────────────────
         # 문서 doc_id 후보 = 트리플에서 나온 출처 doc_id (A)
@@ -1266,8 +1313,10 @@ recency_focus 판단 규칙 (매우 중요):
 - 논문 제목을 묻는 경우 컨텍스트의 "제목" 값을 답하세요.
 - 컨텍스트의 필드 라벨(근거, 출처, 제목, 저자, 저널, 날짜 등)은 답변 문장에 그대로
   베껴 쓰지 말고, 자연스러운 한국어 문장으로 풀어서 답하세요.
-- Confluence 문서의 날짜를 답할 때는 날짜와 함께 몇 주차 문서인지(예: 2026-W02)도
-  컨텍스트에 있으면 함께 답하세요.
+- ReportsDB/Confluence(내부 문서)는 정확한 날짜 대신 "2026년 W02"처럼 주차로
+  컨텍스트에 표시됩니다. 이 값을 그대로 "2026년 2주차" 같은 자연스러운 표현으로
+  답하세요 (내부 문서에 대해 실제 날짜(YYYY-MM-DD)를 추측해서 답하지 마세요).
+  반면 PapersDB(논문)는 정확한 날짜 그대로 컨텍스트에 있으니 날짜로 답하세요.
 - 이전 대화에서 언급된 메타데이터도 참고하세요.
 - 컨텍스트와 이전 대화 모두에 없는 내용만 모른다고 답하세요.
 - 답변은 한국어로 작성하세요.
