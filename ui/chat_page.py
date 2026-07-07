@@ -348,6 +348,13 @@ def build_chat_page():
                         .classes('flex-grow text-sm')
                         .style('font-size:14px;')
                         .props('outlined rounded dense autogrow')
+                        # ★ Shift 없는 Enter 는 기본 동작(줄바꿈)을 막는다.
+                        #   Vue 템플릿 속성으로 컴포넌트 자체에 바로 붙기 때문에, 별도
+                        #   스크립트를 나중에 주입해 붙이는 방식(ui.run_javascript 폴링)과
+                        #   달리 렌더링 시점에 곧바로 적용되어 타이밍 경쟁(race condition)이
+                        #   없다. (기존 방식은 페이지 로드 직후 아주 빠르게 첫 질문을
+                        #   입력하면 패치가 붙기 전에 Enter 가 눌려 줄바꿈이 새는 문제가 있었음)
+                        .props('''@keydown="$event.key === 'Enter' && !$event.shiftKey && $event.preventDefault()"''')
                     )
                     send_btn = (
                         ui.button(icon='arrow_upward')
@@ -589,17 +596,6 @@ def build_chat_page():
                 await on_send_message()
 
         send_btn.on('click', on_send_message)
-        # keydown.enter 만 등록 (prevent 없이) — JS에서 Shift 여부에 따라 선택적으로 preventDefault
+        # keydown.enter 만 등록 (prevent 없이) — 줄바꿈 방지는 위 input_box 의 @keydown
+        # Vue 속성이 렌더링 시점에 즉시 처리하므로, 여기서는 전송(send)만 담당한다.
         input_box.on('keydown.enter', _on_enter)
-        ui.run_javascript("""
-(function() {
-    function patchEnter() {
-        var el = document.querySelector('.q-field__native, textarea');
-        if (!el) { setTimeout(patchEnter, 200); return; }
-        el.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); }
-        }, true);
-    }
-    patchEnter();
-})();
-""")
