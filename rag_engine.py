@@ -393,6 +393,17 @@ class GraphRAG:
         y1_ago    = (today - timedelta(days=365)).strftime("%Y-%m-%d")
         y2_ago    = (today - timedelta(days=730)).strftime("%Y-%m-%d")
 
+        # ★ 데이터셋 자동 선택용: 각 데이터셋의 설명/엔티티 타입을 프롬프트에 보여주고,
+        #   질문 내용상 어떤 데이터셋을 검색해야 하는지 LLM이 함께 판단하게 한다.
+        #   (사용자가 특정 탭을 선택한 경우는 이 판단을 쓰지 않고 그 탭만 검색하지만,
+        #    "전체" 탭일 때는 지금까지 무조건 데이터셋 3개를 다 검색해서 느리고
+        #    관련 없는 데이터셋의 결과가 컨텍스트에 잡음으로 섞이는 문제가 있었다.)
+        dataset_choices = "\n".join(
+            f"- {ds}: {cfg.get('description', '')} (엔티티/문서: {cfg.get('node_types', '문서 전용')})"
+            for ds, cfg in DATASETS.items()
+        )
+        valid_dataset_keys = list(DATASETS.keys())
+
         extract_prompt = f"""다음 질문에서 검색 키워드와 날짜 범위를 추출하세요.
 {history_block}
 오늘 날짜: {today_str}
@@ -402,9 +413,13 @@ class GraphRAG:
 - 최근 1년 이내:   {y1_ago} ~ {today_str}
 - 최근 2년 이내:   {y2_ago} ~ {today_str}
 
+사용 가능한 데이터셋:
+{dataset_choices}
+
 출력 형식 (JSON):
 {{
   "keywords": "키워드1, 키워드2, ...",
+  "target_datasets": ["관련된 데이터셋명", ...],
   "date_from": "YYYY-MM-DD 또는 null",
   "date_to": "YYYY-MM-DD 또는 null",
   "recency_focus": true 또는 false,
@@ -419,6 +434,15 @@ class GraphRAG:
 - "최근 N년" → 오늘 기준 N년 전 날짜 계산
 - "올해" → date_from: "{today.year}-01-01", date_to: "{today_str}"
 - 날짜 언급 없음 → date_from: null, date_to: null
+
+target_datasets 판단 규칙 (매우 중요):
+- 질문 내용을 보고 위 "사용 가능한 데이터셋" 중 실제로 검색이 필요한 데이터셋만
+  골라 배열로 넣으세요. (예: 논문/연구자 관련 질문 → PapersDB만, 사내 보고서/주차
+  관련 질문 → ReportsDB나 Confluence만)
+- 여러 데이터셋에 걸칠 수 있는 질문이면 관련된 것을 모두 포함하세요.
+- ★ 확신이 없거나 질문이 모호하면, 좁히지 말고 관련 있을 수 있는 데이터셋을
+  전부 포함하세요 (좁혀서 놓치는 것보다 넓게 잡는 게 안전합니다).
+- 이전 대화의 맥락(예: 이전에 특정 데이터셋 관련 대상이 언급됨)도 참고하세요.
 
 week 판단 규칙 (내부 문서 ReportsDB/Confluence 는 주차로 관리됨 — 매우 중요):
 - "2026년 26주차", "2026-W26", "26주차"(올해로 간주) 처럼 특정 연도+주차가
@@ -492,17 +516,29 @@ recency_focus 판단 규칙 (매우 중요):
                     except Exception as e:
                         print(f"[Debug] 주차→날짜 범위 계산 실패: {e}")
 
+            # ★ target_datasets 검증: 유효한 데이터셋명만 남기고, 결과가 비었거나
+            #   파싱이 이상하면 안전하게 "전체 데이터셋"으로 폴백한다 — 잘못 좁혀서
+            #   관련 결과를 놓치는 것보다, 넓게 검색하는 게 훨씬 안전하기 때문.
+            target_raw = parsed.get('target_datasets')
+            target_datasets = None
+            if isinstance(target_raw, list):
+                target_datasets = [ds for ds in target_raw if ds in valid_dataset_keys]
+            if not target_datasets:
+                target_datasets = valid_dataset_keys
+
             return {
-                'keywords':      parsed.get('keywords', query),
-                'date_from':     date_from,
-                'date_to':       date_to,
-                'recency_focus': bool(parsed.get('recency_focus', False)),
-                'week':          week,
+                'keywords':        parsed.get('keywords', query),
+                'date_from':       date_from,
+                'date_to':         date_to,
+                'recency_focus':   bool(parsed.get('recency_focus', False)),
+                'week':            week,
+                'target_datasets': target_datasets,
             }
         except Exception as e:
             print(f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
             return {'keywords': query, 'date_from': None, 'date_to': None,
-                    'recency_focus': False, 'week': None}
+                    'recency_focus': False, 'week': None,
+                    'target_datasets': list(DATASETS.keys())}
 
     def _build_return_clause(self, return_fields: list) -> str:
         base = [
@@ -1295,16 +1331,21 @@ recency_focus 판단 규칙 (매우 중요):
         date_to            = extracted['date_to']
         recency_focus      = extracted['recency_focus']
         week               = extracted['week']
+        target_datasets    = extracted['target_datasets']
 
         print(f"[Debug] 추출된 키워드: {extracted_keywords}")
         print(f"[Debug] 날짜 범위: {date_from} ~ {date_to}")
         print(f"[Debug] 최신순 정렬 필요: {recency_focus}")
         print(f"[Debug] 감지된 주차: {week}")
+        print(f"[Debug] LLM 선택 데이터셋: {target_datasets}")
 
         if dataset and dataset != 'All' and dataset in DATASETS:
+            # 사용자가 특정 탭을 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
             search_targets = [dataset]
         else:
-            search_targets = list(DATASETS.keys())
+            # "전체" 탭일 때만 LLM이 판단한 관련 데이터셋으로 검색 범위를 좁힌다.
+            # (판단이 애매하면 target_datasets 자체가 전체 목록으로 안전하게 폴백됨)
+            search_targets = target_datasets
 
         # [단계 2] 지식 그래프 검색 + N-hop 확장
         #   대상 데이터셋들의 hop 수를 모아 표시 (보통 2-hop). retrieve() 내부에서
