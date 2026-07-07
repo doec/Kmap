@@ -429,6 +429,19 @@ class GraphRAG:
 
         return where_parts, params
 
+    # ★ 트리플 컨텍스트에 필드명을 그대로(source_url, author 등 영어) 노출하면
+    #   LLM이 그 영어 라벨을 답변에 그대로 베껴 쓰는 경우가 있었다.
+    #   (예: "source_url: https://..." 처럼 라벨이 섞여 나옴)
+    #   한글 라벨로 바꿔서 LLM이 자연스러운 한국어 문장으로 답하도록 유도한다.
+    _FIELD_LABELS = {
+        'evidence':    '근거',
+        'source_url':  '출처',
+        'title':       '제목',
+        'author':      '저자',
+        'journal':     '저널',
+        'date':        '날짜',
+    }
+
     def _format_rows(self, rows: list, return_fields: list) -> str:
         if not rows:
             return _NO_RESULT
@@ -444,7 +457,8 @@ class GraphRAG:
                     f"({r.get('oname')} :{r.get('otype')})")
             for f in return_fields:
                 if f != 'confidence' and r.get(f):
-                    line += f"\n  {f}: {r[f]}"
+                    label = self._FIELD_LABELS.get(f, f)
+                    line += f"\n  {label}: {r[f]}"
             lines.append(line)
         return "\n".join(lines)
 
@@ -1135,11 +1149,13 @@ class GraphRAG:
 
 답변 규칙:
 - 제공된 컨텍스트와 이전 대화 내용을 적극적으로 활용하여 답하세요.
-- 컨텍스트에 author, title, journal, source_url, date 등의 메타데이터가 있으면 반드시 활용하세요.
-- 저자를 묻는 경우 컨텍스트의 author 값을 답하세요.
-- 게재 저널을 묻는 경우 컨텍스트의 journal 값을 답하세요.
-- 링크, 출처, URL, DOI를 묻는 경우 컨텍스트의 source_url 값을 답하세요.
-- 논문 제목을 묻는 경우 컨텍스트의 title 값을 답하세요.
+- 컨텍스트에 저자, 제목, 저널, 출처, 날짜 등의 메타데이터가 있으면 반드시 활용하세요.
+- 저자를 묻는 경우 컨텍스트의 "저자" 값을 답하세요.
+- 게재 저널을 묻는 경우 컨텍스트의 "저널" 값을 답하세요.
+- 링크, 출처, URL, DOI를 묻는 경우 컨텍스트의 "출처" 값을 답하세요.
+- 논문 제목을 묻는 경우 컨텍스트의 "제목" 값을 답하세요.
+- 컨텍스트의 필드 라벨(근거, 출처, 제목, 저자, 저널, 날짜 등)은 답변 문장에 그대로
+  베껴 쓰지 말고, 자연스러운 한국어 문장으로 풀어서 답하세요.
 - 이전 대화에서 언급된 메타데이터도 참고하세요.
 - 컨텍스트와 이전 대화 모두에 없는 내용만 모른다고 답하세요.
 - 답변은 한국어로 작성하세요."""
