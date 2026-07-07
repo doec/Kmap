@@ -148,9 +148,13 @@ RRF_K             = 60
 MAX_HISTORY_TURNS = 5
 
 # 문서 섹션 관련 상수
-DOC_SEARCH_LIMIT  = 5     # 문서 단위 벡터 검색으로 가져올 문서 개수 (B 기능)
+DOC_SEARCH_LIMIT  = 5     # 문서 단위 벡터/키워드 검색으로 가져올 문서 개수 (B/C 기능)
 DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷 (초록/전문처럼 긴 텍스트끼리 비교)
 DOC_BODY_MAXLEN   = 700   # 답변 컨텍스트에 넣을 문서 본문(abstract/content) 최대 길이
+# ★ 저자 검색(D 기능)은 author 필드에 대한 "정확한" 매칭이라 B/C(유사도/관련도 기반
+#   검색)보다 훨씬 신뢰도가 높다. "그 사람이 쓴 모든 보고서" 같은 질문은 5건으로
+#   자르면 최근 문서를 놓칠 수 있으므로 훨씬 넉넉하게 잡는다.
+AUTHOR_SEARCH_LIMIT = 30
 
 # 엔티티 벡터 검색(짧은 "name (type)" 텍스트 vs 긴 질문 문장) 최소 유사도 컷.
 # ★ 실측 결과, BGE-M3 임베딩은 무관한 쌍끼리도 코사인 유사도가 0.8 근처에서
@@ -933,14 +937,20 @@ recency_focus 판단 규칙 (매우 중요):
 
     # ── D 기능: 저자명으로 문서 직접 검색 ────────────────────────────────────────
     def _doc_author_retrieve(self, keywords_str: str, cfg: dict,
-                             limit: int = DOC_SEARCH_LIMIT) -> list[str]:
+                             limit: int = AUTHOR_SEARCH_LIMIT) -> list[str]:
         """
-        Paper/Report 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 찾는다.
+        Paper/Report 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 돌려준다.
 
         text 검색(A)은 트리플의 r.author 를 보므로 "그 저자의 트리플이 있어야"만
         찾아지고, 저자만 언급되고 트리플에 안 걸린 논문은 놓친다. 이 채널은
         메타 노드를 author 기준으로 직접 조회하므로 "이 사람이 쓴 논문/보고서
         찾아줘" 류의 질문에 안정적으로 대응한다.
+
+        ★ author 필드에 대한 정확한 매칭이라 B(벡터)/C(FULLTEXT) 보다 훨씬 신뢰도가
+        높다. 그런데 기존에 DOC_SEARCH_LIMIT(5)를 그대로 썼더니, "그 사람이 쓴
+        보고서 최근 걸 보여줘" 처럼 한 사람이 문서를 많이 쓴 경우 5건으로 잘려서
+        정작 최신 문서가 후보에서 누락되는 문제가 있었다. AUTHOR_SEARCH_LIMIT(30)로
+        넉넉히 잡고, 잘리더라도 최신 문서가 먼저 담기도록 date 내림차순으로 정렬한다.
         """
         doc_label = cfg.get('doc_label')
         if not doc_label or not keywords_str:
@@ -958,6 +968,7 @@ recency_focus 판단 규칙 (매우 중요):
             WHERE m.author IS NOT NULL
               AND any(kw IN $keywords WHERE toLower(m.author) CONTAINS toLower(kw))
             RETURN m.doc_id AS doc_id
+            ORDER BY m.date DESC
             LIMIT $limit
         """
         try:
