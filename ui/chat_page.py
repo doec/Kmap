@@ -6,7 +6,7 @@ import re
 
 from nicegui import ui
 
-from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, OKR_DATASET, DATASETS
+from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, CONFLUENCE_DATASET, DATASETS
 from retriever.neo4j_retriever import Neo4jRetriever
 
 # ── linkify: 답변 텍스트의 맨 URL / DOI 를 마크다운 링크로 변환 ───────────────────────────────
@@ -30,10 +30,10 @@ _neo4j_viz = Neo4jRetriever()
 
 # ── source chip colours ────────────────────────────────────────────────────────────────────────────────
 _DATASET_CHIP_COLOR = {
-    REPORTS_DATASET: "blue",
-    PAPERS_DATASET:  "teal",
-    OKR_DATASET:     "purple",
-    "ExperimentsDB": "amber",
+    REPORTS_DATASET:    "blue",
+    PAPERS_DATASET:     "teal",
+    CONFLUENCE_DATASET: "purple",
+    "ExperimentsDB":    "amber",
 }
 
 # ── dataset tab labels ──────────────────────────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ _DATASET_TABS = [
     ("전체",    "All"),
     ("ReportsDB", REPORTS_DATASET),
     ("논문",    PAPERS_DATASET),
-    ("OKR_BD(~2025)", OKR_DATASET),
+    ("Confluence", CONFLUENCE_DATASET),
     ("실험",    "ExperimentsDB"),   # future — disabled
 ]
 

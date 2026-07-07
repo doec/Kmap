@@ -101,12 +101,13 @@ REPORTS_DESC    = os.getenv('NEO4J_REPORTS_DESC',    '내부 연구 보고서 �
 PAPERS_DATASET  = os.getenv('NEO4J_PAPERS_DATASET',  'PapersDB')
 PAPERS_DESC     = os.getenv('NEO4J_PAPERS_DESC',     '논문 기반 인과관계 KG')
 
-# ★ 신규: OKR 문서 데이터셋. 트리플/엔티티가 없는 순수 문서형 데이터셋이라
-#   (research_item + content 를 결합 임베딩한 OKR 노드만 존재), DATASETS 설정에서
-#   엔티티 관련 필드(vector_index, hop2_relations 등)는 비워두고 문서 채널
-#   (doc_vector_index/doc_fulltext_index/doc_label)만 채운다.
-OKR_DATASET = os.getenv('NEO4J_OKR_DATASET', 'BD_OKR_bf2026')
-OKR_DESC    = os.getenv('NEO4J_OKR_DESC',    'OKR 목표/과제 문서 (~2025)')
+# ★ Confluence 문서 데이터셋 (구 BD_OKR_bf2026 → 동일한 Confluence 주간보고
+#   데이터라 하나로 통합됨). 트리플/엔티티가 없는 순수 문서형 데이터셋이라
+#   (research_item + summary + content 를 결합 임베딩한 Confl_doc 노드만 존재),
+#   DATASETS 설정에서 엔티티 관련 필드(vector_index, hop2_relations 등)는
+#   비워두고 문서 채널(doc_vector_index/doc_fulltext_index/doc_label)만 채운다.
+CONFLUENCE_DATASET = os.getenv('NEO4J_CONFLUENCE_DATASET', 'Confluence')
+CONFLUENCE_DESC    = os.getenv('NEO4J_CONFLUENCE_DESC',    'Confluence 주간보고/문서')
 
 DEFAULT_SEARCH_LIMIT = 50
 DEFAULT_SEARCH_HOPS  = 2
@@ -211,7 +212,7 @@ DATASETS: dict = {
         #   의미 파악에 유리하므로, 답변 컨텍스트용 본문으로 content_norm 을 쓴다.
         'doc_body_field':   'content_norm',
         'doc_body_label':   '내용',              # LLM 컨텍스트에 표기할 본문 레이블
-        'doc_fulltext_index': 'doc_fulltext',   # ★ C: 문서 본문 키워드(FULLTEXT) 검색
+        'doc_fulltext_index': 'reportsdb_doc_fulltext',   # ★ 이름 변경됨 (구 doc_fulltext)
         # ★ ReportsDB 는 사용자 질의에 코드(D1 등)가 섞일 수 있으므로,
         #   검색 전에 코드→물질명으로 질의를 정규화한다 (아래 _normalize_query).
         'normalize_query':  True,
@@ -228,8 +229,8 @@ DATASETS: dict = {
         'search_fields':  ['s.name', 'o.name', 'r.evidence', 'r.title', 'r.author'],
         'has_date':       True,
         'min_confidence': 0.6,
-        'vector_index':   'papersdb_embedding',
-        # papersdb_embedding 은 n.embedding 을 인덱싱하는데, Paper 메타 노드는
+        'vector_index':   'papersdb_entity_embedding',  # ★ 이름 변경됨 (구 papersdb_embedding)
+        # papersdb_entity_embedding 은 n.embedding 을 인덱싱하는데, Paper 메타 노드는
         # n.abstract_embedding(다른 속성)을 쓰므로 이 인덱스에 애초에 포함되지 않는다.
         # 그래도 방어적으로 필터를 걸어 안전하게 처리한다.
         'meta_label':     'Paper',
@@ -246,7 +247,7 @@ DATASETS: dict = {
         'doc_label':        'Paper',                     # 메타 노드 레이블
         'doc_body_field':   'abstract',                  # 본문 속성명 (논문 초록)
         'doc_body_label':   '초록',                       # LLM 컨텍스트에 표기할 본문 레이블
-        'doc_fulltext_index': 'paper_fulltext',          # ★ C: 초록 키워드(FULLTEXT) 검색
+        'doc_fulltext_index': 'papersdb_doc_fulltext',   # ★ 이름 변경됨 (구 paper_fulltext)
         # ★ 코드→물질명 매핑(CODE_MAP)은 사내 코드에 대한 일반적인 번역이라
         #   ReportsDB 뿐 아니라 PapersDB 검색에도 동일하게 적용해야 한다.
         #   (예: "BD30" 으로 논문 검색 시에도 물질명으로 정규화되어야 논문
@@ -254,13 +255,13 @@ DATASETS: dict = {
         #   켜둬도 부작용이 없다.
         'normalize_query':  True,
     },
-    # ── OKR: 트리플/엔티티가 없는 순수 문서형 데이터셋 ──────────────────────────
+    # ── Confluence: 트리플/엔티티가 없는 순수 문서형 데이터셋 ────────────────────
     # (entity)-[r]->(entity) 트리플 자체가 없으므로, "엔티티 벡터 검색·2-hop 확장"에
     # 해당하는 필드(vector_index, meta_label, hop2_relations)는 아예 넣지 않는다.
     # → retrieve() 가 entity 검색을 text 모드로 자동 폴백하고(빈 결과, 무해),
     #   문서 채널(B: 벡터, C: FULLTEXT, D: 저자)만으로 문서를 찾아 컨텍스트를 구성한다.
-    OKR_DATASET: {
-        'description':    OKR_DESC,
+    CONFLUENCE_DATASET: {
+        'description':    CONFLUENCE_DESC,
         'node_types':     '해당 없음 (문서 전용 데이터셋 — 트리플/엔티티 없음)',
         'sort_field':     'confidence',
         'sort_order':     'DESC',
@@ -270,13 +271,12 @@ DATASETS: dict = {
         'min_confidence': None,
         'default_mode':   'hybrid',
         'search_hops':    None,
-        # ── 문서(OKR 노드) 관련 설정 ──
-        'doc_vector_index': 'bd_okr_doc_embedding',   # OKR 노드 결합 임베딩(research_item_norm+content_norm)
-        'doc_label':        'OKR',                    # 메타 노드 레이블
-        # ★ FULLTEXT 인덱스 이름은 실제 C1_load_data.py 에서 생성한 이름으로
-        #   맞춰야 한다. 우선 관례(paper_fulltext/doc_fulltext)를 따라 추정값을
-        #   넣어뒀으니, 실제 인덱스명이 다르면 이 값만 바꾸면 된다.
-        'doc_fulltext_index': 'okr_fulltext',
+        # ── 문서(Confl_doc 노드) 관련 설정 ──
+        'doc_vector_index': 'confluence_doc_embedding',   # 결합 임베딩(research_item_norm+summary_norm+content_norm)
+        'doc_label':        'Confl_doc',                  # 메타 노드 레이블
+        # ★ Confluence 는 원본(코드)/정규화(물질명) FULLTEXT 인덱스가 분리되어 있어
+        #   리스트로 둘 다 지정 → _doc_fulltext_retrieve 가 두 인덱스를 모두 검색해 합친다.
+        'doc_fulltext_index': ['confluence_doc_fulltext', 'confluence_doc_fulltext_norm'],
         'doc_body_field':   'content_norm',           # 본문 속성명 (물질명 정규화본)
         'doc_body_label':   '내용',                    # LLM 컨텍스트에 표기할 본문 레이블
         # ReportsDB 와 마찬가지로 물질 코드가 섞일 수 있으므로 질의 정규화 적용
@@ -750,16 +750,23 @@ class GraphRAG:
     def _doc_fulltext_retrieve(self, keywords_str: str, cfg: dict,
                                limit: int = DOC_SEARCH_LIMIT) -> list[str]:
         """
-        doc_fulltext / paper_fulltext 인덱스로 문서 본문(title+content(_norm)/abstract)에서
-        키워드를 검색해 관련 문서의 doc_id 목록을 돌려준다.
+        doc_fulltext_index 로 지정된 FULLTEXT 인덱스에서 문서 본문 키워드를 검색해
+        관련 문서의 doc_id 목록을 돌려준다.
 
         벡터 검색(_doc_vector_retrieve)이 "의미 유사도"로 찾는다면, 이건 "단어 일치"로
         찾는다. 코드(D1)·모델명·수치처럼 정확한 표기가 중요한 검색에 강하다.
-        (ReportsDB 는 content 원문(코드)까지 인덱싱돼 있어 정규화 전 코드로도 매칭됨)
+
+        ★ doc_fulltext_index 는 문자열 하나 또는 문자열 리스트를 받는다.
+          Confluence 처럼 원본(코드)용/정규화(물질명)용 FULLTEXT 인덱스가
+          두 개로 분리된 데이터셋은 리스트로 [원본 인덱스, 정규화 인덱스] 를 주면
+          둘 다 검색해서 결과를 합친다 (ReportsDB 는 인덱스 하나에 두 필드가
+          함께 들어있어 문자열 하나로 충분).
         """
-        ft_index = cfg.get('doc_fulltext_index')
-        if not ft_index or not keywords_str:
+        ft_indexes = cfg.get('doc_fulltext_index')
+        if not ft_indexes or not keywords_str:
             return []
+        if isinstance(ft_indexes, str):
+            ft_indexes = [ft_indexes]
 
         # Lucene 질의 문자열 구성:
         # 키워드에 '/'·'-' 등 Lucene 특수문자가 있으면 파싱 오류가 나므로,
@@ -780,14 +787,16 @@ class GraphRAG:
             RETURN node.doc_id AS doc_id, score
             ORDER BY score DESC
         """
-        params = {'index': ft_index, 'q': lucene_query, 'limit': limit}
-        try:
-            with self.driver.session() as session:
-                rows = [dict(r) for r in session.run(query_str, **params)]
-            return [r['doc_id'] for r in rows if r.get('doc_id')]
-        except Exception as e:
-            print(f"[Debug] 문서 FULLTEXT 검색 실패: {e}")
-            return []
+        doc_ids: list[str] = []
+        for ft_index in ft_indexes:
+            params = {'index': ft_index, 'q': lucene_query, 'limit': limit}
+            try:
+                with self.driver.session() as session:
+                    rows = [dict(r) for r in session.run(query_str, **params)]
+                doc_ids.extend(r['doc_id'] for r in rows if r.get('doc_id'))
+            except Exception as e:
+                print(f"[Debug] 문서 FULLTEXT 검색 실패 ({ft_index}): {e}")
+        return doc_ids
 
     # ── D 기능: 저자명으로 문서 직접 검색 ────────────────────────────────────────
     def _doc_author_retrieve(self, keywords_str: str, cfg: dict,
