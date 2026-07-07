@@ -363,7 +363,8 @@ class GraphRAG:
 {{
   "keywords": "키워드1, 키워드2, ...",
   "date_from": "YYYY-MM-DD 또는 null",
-  "date_to": "YYYY-MM-DD 또는 null"
+  "date_to": "YYYY-MM-DD 또는 null",
+  "recency_focus": true 또는 false
 }}
 
 날짜 변환 규칙:
@@ -374,6 +375,15 @@ class GraphRAG:
 - "최근 N년" → 오늘 기준 N년 전 날짜 계산
 - "올해" → date_from: "{today.year}-01-01", date_to: "{today_str}"
 - 날짜 언급 없음 → date_from: null, date_to: null
+
+recency_focus 판단 규칙 (매우 중요):
+- "가장 최근", "제일 최근", "최신", "최근 결과", "요즘" 처럼 구체적인 기간(개월/년) 없이
+  "최근/최신"만 언급되어 시간 순으로 정렬해서 보여달라는 의도가 있으면 → true
+- 위와 같이 recency_focus 가 true 인 경우, 검색 결과를 confidence(신뢰도) 순이 아니라
+  date(날짜) 내림차순으로 정렬해야 하므로 반드시 true 로 표시하세요.
+- 구체적 기간이 명시되어 date_from/date_to 가 채워진 경우에도, 그 기간 안에서 역시
+  최신순 정렬이 자연스러우므로 recency_focus: true 로 표시하세요.
+- 날짜/최근 관련 언급이 전혀 없으면 → false
 
 키워드 추출 규칙:
 1. 핵심 명사(엔티티) 위주로 추출
@@ -405,13 +415,14 @@ class GraphRAG:
                      .strip())
             parsed = json.loads(clean)
             return {
-                'keywords':  parsed.get('keywords', query),
-                'date_from': parsed.get('date_from'),
-                'date_to':   parsed.get('date_to'),
+                'keywords':      parsed.get('keywords', query),
+                'date_from':     parsed.get('date_from'),
+                'date_to':       parsed.get('date_to'),
+                'recency_focus': bool(parsed.get('recency_focus', False)),
             }
         except Exception as e:
             print(f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
-            return {'keywords': query, 'date_from': None, 'date_to': None}
+            return {'keywords': query, 'date_from': None, 'date_to': None, 'recency_focus': False}
 
     def _build_return_clause(self, return_fields: list) -> str:
         base = [
@@ -494,11 +505,19 @@ class GraphRAG:
 
     def _text_retrieve_raw(self, keywords_str: str, dataset: str, cfg: dict,
                            limit: int, date_from: str, date_to: str,
-                           allowed_rels: list[str] = None) -> list[dict]:
+                           allowed_rels: list[str] = None,
+                           recency_focus: bool = False) -> list[dict]:
         """
         allowed_rels 가 주어지면 그 관계 타입으로만 결과를 제한한다.
         (1차 검색에서는 None 으로 호출해 관계 타입 무관하게 키워드 매칭하고,
          2-hop 확장에서는 cfg['hop2_relations'] 를 넘겨 인과·성능 계열로만 제한한다.)
+
+        recency_focus 가 True 이고 이 데이터셋이 날짜(date)를 지원하면, 정렬 기준을
+        cfg 의 기본값(confidence DESC) 대신 date DESC 로 바꾼다.
+        ★ 이건 Cypher ORDER BY + LIMIT 단계에서 바로 적용되어야 의미가 있다.
+          결과를 다 가져온 뒤 Python 에서 재정렬하면, 애초에 confidence 기준으로
+          LIMIT 에 걸려 짤린 "진짜로 최신인데 confidence 가 낮은" 트리플을
+          영영 놓치게 된다.
         """
         keywords      = keywords_str.replace(",", " ").split()
         return_fields = cfg['return_fields']
@@ -513,13 +532,18 @@ class GraphRAG:
             params['allowed_rels'] = allowed_rels
             rel_filter = "AND type(r) IN $allowed_rels"
 
+        if recency_focus and cfg.get('has_date'):
+            sort_field, sort_order = 'date', 'DESC'   # RETURN 절의 별칭(alias) 참조
+        else:
+            sort_field, sort_order = cfg['sort_field'], cfg['sort_order']
+
         query_str = f"""
             MATCH (s:{dataset})-[r]->(o:{dataset})
             WHERE NOT type(r) IN $struct_rels
               {rel_filter}
               AND {" AND ".join(where_parts)}
             RETURN {return_clause}
-            ORDER BY {cfg['sort_field']} {cfg['sort_order']}
+            ORDER BY {sort_field} {sort_order}
             LIMIT $limit
         """
         with self.driver.session() as session:
@@ -703,12 +727,14 @@ class GraphRAG:
         return list(seen.values())[:limit]
 
     def _text_retrieve_2hop(self, keywords_str: str, dataset: str, cfg: dict,
-                            limit: int, date_from: str, date_to: str) -> list[dict]:
+                            limit: int, date_from: str, date_to: str,
+                            recency_focus: bool = False) -> list[dict]:
         hop_limit = limit * 2
 
         # 1차 검색: 질문 키워드로 매칭 — 관계 타입 무관 (원 키워드가 직접 맞은 것이므로)
         hop1_rows = self._text_retrieve_raw(
-            keywords_str, dataset, cfg, hop_limit, date_from, date_to
+            keywords_str, dataset, cfg, hop_limit, date_from, date_to,
+            recency_focus=recency_focus
         )
 
         hop1_nodes = set()
@@ -726,7 +752,7 @@ class GraphRAG:
         extended_keywords = keywords_str + ", " + ", ".join(list(hop1_nodes)[:10])
         hop2_rows = self._text_retrieve_raw(
             extended_keywords, dataset, cfg, hop_limit, date_from, date_to,
-            allowed_rels=hop2_relations
+            allowed_rels=hop2_relations, recency_focus=recency_focus
         )
 
         seen: dict = {}
@@ -734,9 +760,15 @@ class GraphRAG:
             key = f"{r.get('sname')}|{r.get('rel')}|{r.get('oname')}"
             seen[key] = r
 
+        results = list(seen.values())
+        if recency_focus and cfg.get('has_date'):
+            # hop1/hop2 는 각각 날짜순으로 정렬돼 있지만, 두 결과를 합치면 전체 순서가
+            # 깨지므로 병합 후 다시 날짜 내림차순으로 재정렬한다. (날짜 없는 항목은 뒤로)
+            results.sort(key=lambda r: r.get('date') or '', reverse=True)
+
         print(f"[Debug] {dataset} 2-hop: 1차 {len(hop1_rows)}개 + "
-              f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(seen), limit)}개")
-        return list(seen.values())[:limit]
+              f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(results), limit)}개")
+        return results[:limit]
 
     # ── B 기능: 문서 단위 벡터 검색 ────────────────────────────────────────────
     def _doc_vector_retrieve(self, query_text: str, cfg: dict,
@@ -877,7 +909,8 @@ class GraphRAG:
             return []
 
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
-    def _fetch_documents(self, doc_ids: set[str], cfg: dict) -> str:
+    def _fetch_documents(self, doc_ids: set[str], cfg: dict,
+                         recency_focus: bool = False) -> str:
         """
         doc_id 집합을 받아 Paper/Report 메타 노드에서 제목·본문·출처를 조회하고,
         LLM 컨텍스트에 넣을 "관련 문서" 섹션 문자열로 만든다.
@@ -885,6 +918,9 @@ class GraphRAG:
         트리플은 (주어)-[관계]->(목적어) 형태라 근거 문장(evidence) 정도만 담지만,
         여기서 원문(논문 초록 / 보고서 전문)을 붙여 주면 답변 근거가 훨씬 풍부해진다.
         본문은 DOC_BODY_MAXLEN 로 잘라 컨텍스트 폭주를 막는다.
+
+        recency_focus 가 True 면 문서를 날짜 내림차순으로 정렬해 반환한다.
+        ("가장 최근 문서 보여줘" 류의 질문에서 최신 문서가 먼저 나오게 함)
         """
         doc_ids = {d for d in doc_ids if d}
         if not doc_ids or not self.driver:
@@ -902,6 +938,7 @@ class GraphRAG:
         # (Paper 노드엔 content 가 없으므로 COALESCE 는 자연히 body_field 값만 남긴다)
         # ★ journal 은 Paper 노드 전용, week 는 Confl_doc 노드 전용 필드
         #   (다른 데이터셋엔 없으면 null 반환되어 meta_bits 에서 자연히 제외된다).
+        order_clause = "ORDER BY m.date DESC" if recency_focus else ""
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE m.doc_id IN $ids
@@ -913,6 +950,7 @@ class GraphRAG:
                    m.journal    AS journal,
                    m.week       AS week,
                    COALESCE(m.{body_field}, m.content) AS body
+            {order_clause}
         """
         try:
             with self.driver.session() as session:
@@ -953,7 +991,8 @@ class GraphRAG:
                  dataset: str, mode: str = None,
                  limit: int = DEFAULT_SEARCH_LIMIT,
                  date_from: str = None,
-                 date_to: str = None) -> str:
+                 date_to: str = None,
+                 recency_focus: bool = False) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -995,9 +1034,11 @@ class GraphRAG:
         print(f"[Debug] {dataset} 실제 검색 질의(vector): '{query_text}'")
 
         if search_mode == 'text':
-            rows = (self._text_retrieve_2hop(keywords_str, dataset, cfg, limit, date_from, date_to)
+            rows = (self._text_retrieve_2hop(keywords_str, dataset, cfg, limit, date_from, date_to,
+                                             recency_focus=recency_focus)
                     if hops == 2
-                    else self._text_retrieve_raw(keywords_str, dataset, cfg, limit, date_from, date_to))
+                    else self._text_retrieve_raw(keywords_str, dataset, cfg, limit, date_from, date_to,
+                                                 recency_focus=recency_focus))
 
         elif search_mode == 'vector':
             rows = (self._vector_retrieve_2hop(query_text, dataset, cfg, limit, date_from, date_to)
@@ -1009,7 +1050,8 @@ class GraphRAG:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 f_text = executor.submit(
                     self._text_retrieve_2hop if hops == 2 else self._text_retrieve_raw,
-                    keywords_str, dataset, cfg, fetch_limit, date_from, date_to
+                    keywords_str, dataset, cfg, fetch_limit, date_from, date_to,
+                    recency_focus=recency_focus
                 )
                 f_vec = executor.submit(
                     self._vector_retrieve_2hop if hops == 2 else self._vector_retrieve_raw,
@@ -1037,6 +1079,14 @@ class GraphRAG:
             sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)[:limit]
             rows = [all_rows[k] for k in sorted_keys]
 
+        # ★ "가장 최근" 의도가 감지되면, 검색 방식(text/vector/hybrid)과 무관하게
+        #   최종 결과를 날짜 내림차순으로 다시 정렬한다. text 모드는 이미 Cypher
+        #   단계에서 date 로 정렬돼 있어 사실상 no-op 이지만, vector/hybrid 는
+        #   confidence·유사도·RRF 순으로 뽑힌 후보라서 여기서 최종적으로
+        #   "최신순으로 보여달라"는 사용자 의도에 맞게 다시 정렬해야 한다.
+        if recency_focus and cfg.get('has_date') and rows:
+            rows.sort(key=lambda r: r.get('date') or '', reverse=True)
+
         # ── 트리플 컨텍스트 ─────────────────────────────────────────────────────
         triples_ctx = self._format_rows(rows, cfg['return_fields'])
 
@@ -1054,7 +1104,7 @@ class GraphRAG:
         print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} → 합집합 {len(doc_ids)}")
 
-        docs_ctx = self._fetch_documents(doc_ids, cfg)
+        docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus)
         if doc_ids and not docs_ctx:
             print(f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
                   f"(doc_id 불일치 또는 doc_label/속성 확인 필요). 예시 id: {list(doc_ids)[:3]}")
@@ -1094,9 +1144,11 @@ class GraphRAG:
         extracted_keywords = extracted['keywords']
         date_from          = extracted['date_from']
         date_to            = extracted['date_to']
+        recency_focus      = extracted['recency_focus']
 
         print(f"[Debug] 추출된 키워드: {extracted_keywords}")
         print(f"[Debug] 날짜 범위: {date_from} ~ {date_to}")
+        print(f"[Debug] 최신순 정렬 필요: {recency_focus}")
 
         if dataset and dataset != 'All' and dataset in DATASETS:
             search_targets = [dataset]
@@ -1116,7 +1168,7 @@ class GraphRAG:
                 ds: executor.submit(
                     self.retrieve,
                     extracted_keywords, query, ds, mode,
-                    DEFAULT_SEARCH_LIMIT, date_from, date_to
+                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus
                 )
                 for ds in search_targets
             }
@@ -1153,6 +1205,10 @@ class GraphRAG:
         if date_from or date_to:
             date_info = (f"\n검색 적용 날짜 범위: "
                          f"{date_from or '제한없음'} ~ {date_to or '제한없음'}")
+        if recency_focus:
+            date_info += ("\n★ 아래 지식 그래프 컨텍스트의 트리플/문서는 날짜 내림차순"
+                          "(최신이 맨 위)으로 정렬되어 있습니다. 사용자가 '가장 최근'을 물었다면"
+                          " 맨 위(가장 먼저 나오는) 항목을 기준으로 답하세요.")
 
         # ★ 질문에 사내 코드(D1, BD30 등)가 있으면 물질명 매핑을 프롬프트에 명시한다.
         #   검색 컨텍스트(트리플/문서)는 물질명(content_norm) 기준으로 되어 있어서,
