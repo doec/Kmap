@@ -206,6 +206,10 @@ def build_chat_page():
         /* 인라인 수식이 본문 글자 크기와 어긋나지 않게 */
         .ai-bubble mjx-container { font-size: inherit !important; }
         .ai-bubble mjx-container[display="true"] { margin: 0.4em 0 !important; }
+
+        /* 마크다운 강조(*...* / _..._)를 이탤릭 대신 굵게로 표시한다.
+           한글은 전용 이탤릭 글꼴이 없어 기울이면 작고 어색하게 렌더링되기 때문. */
+        .ai-bubble em, .ai-bubble i { font-style: normal !important; font-weight: 600; }
     </style>
     <script>
         // 답변이 렌더링/갱신된 뒤 호출하면 새로 들어온 수식을 다시 typeset 한다.
