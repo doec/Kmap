@@ -375,7 +375,7 @@ def build_chat_page():
                     #   다음 질문부터 즉시 반영된다 (서버 재시작 불필요).
                     llm_select = ui.select(
                         {
-                            None:         'gpt-prod (GPT-OSS 120B, 기본)',
+                            None:         'GPT-OSS 120B (기본)',
                             'GaussO4.1':  'GaussO4.1',
                             'Gemma4':     'Gemma4 (경량/빠름)',
                         },
