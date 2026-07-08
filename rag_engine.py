@@ -1324,6 +1324,31 @@ recency_focus 판단 규칙 (매우 중요):
         if not docs:
             return ""
 
+        # ★ 중복 제거: 같은 doc_id 에 메타 노드가 여러 개이거나(DB 중복),
+        #   제목+출처가 동일한 사실상 같은 문서가 여러 건 저장돼 있으면 표/목록에
+        #   같은 내용이 두 번 나온다. doc_id 기준으로 먼저 걸러내고, doc_id 가 달라도
+        #   제목+출처가 완전히 같으면 같은 문서로 보고 한 번만 남긴다(순서 유지).
+        deduped = []
+        seen_ids: set = set()
+        seen_keys: set = set()
+        for d in docs:
+            did = d.get('doc_id')
+            if did and did in seen_ids:
+                continue
+            # 제목이 같아도 주차/출처가 다르면 다른 문서로 취급(오검출 방지)
+            key = (d.get('title'), d.get('source_url'), d.get('year_week'))
+            has_key = any(k is not None for k in key)
+            if has_key and key in seen_keys:
+                continue
+            if did:
+                seen_ids.add(did)
+            if has_key:
+                seen_keys.add(key)
+            deduped.append(d)
+        if len(deduped) != len(docs):
+            self._dbg(2, f"[Debug] {doc_label} 문서 중복 제거: {len(docs)}건 → {len(deduped)}건")
+        docs = deduped
+
         lines = ["[관련 문서 원문]"]
         for d in docs:
             body = (d.get('body') or '').strip().replace('\n', ' ')
