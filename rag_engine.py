@@ -461,7 +461,9 @@ class GraphRAG:
   "date_from": "YYYY-MM-DD 또는 null",
   "date_to": "YYYY-MM-DD 또는 null",
   "recency_focus": true 또는 false,
-  "year_week": "YYYY-WNN 또는 null"
+  "year_week": "YYYY-WNN 또는 null",
+  "year_week_from": "YYYY-WNN 또는 null",
+  "year_week_to": "YYYY-WNN 또는 null"
 }}
 
 날짜 변환 규칙:
@@ -494,6 +496,11 @@ year_week 판단 규칙 (내부 문서 ReportsDB/Confluence 는 주차로 관리
   언급되면 → year_week: "YYYY-WNN" 형식으로 추출 (예: "2026-W26", 주차는 2자리 0-패딩).
 - 연도 없이 "26주차"만 언급되면 오늘 연도({today.year})를 사용하세요.
 - 주차 언급이 없으면 → year_week: null
+- ★ "10주차에서 15주차 사이", "10주차~15주차", "10주차부터 15주차까지" 처럼 주차
+  "범위"가 언급되면, year_week 는 null 로 두고 대신 year_week_from/year_week_to 에
+  각각 시작 주차/끝 주차를 "YYYY-WNN" 형식으로 넣으세요 (연도 없으면 오늘 연도 사용).
+  예: "2026년 10주차에서 15주차 사이" → year_week_from: "2026-W10", year_week_to: "2026-W15"
+- 주차 범위 언급이 없으면 → year_week_from: null, year_week_to: null
 
 recency_focus 판단 규칙 (매우 중요):
 - "가장 최근", "제일 최근", "최신", "최근 결과", "요즘" 처럼 구체적인 기간(개월/년) 없이
@@ -573,6 +580,24 @@ recency_focus 판단 규칙 (매우 중요):
                         date_to   = date.fromisocalendar(y, w, 7).isoformat()  # 일요일
                     except Exception as e:
                         self._dbg(0, f"[Debug] 주차→날짜 범위 계산 실패: {e}")
+
+            # ★ 주차 "범위"(year_week_from~year_week_to)가 감지됐는데 date_from/date_to 가
+            #   비어 있으면, 시작 주차의 월요일 ~ 끝 주차의 일요일로 날짜 범위를 계산한다.
+            if not date_from and not date_to:
+                wf_raw = parsed.get('year_week_from')
+                wt_raw = parsed.get('year_week_to')
+                wf_m = re.match(r'^(\d{4})-W(\d{1,2})$', str(wf_raw).strip(), re.IGNORECASE) if wf_raw else None
+                wt_m = re.match(r'^(\d{4})-W(\d{1,2})$', str(wt_raw).strip(), re.IGNORECASE) if wt_raw else None
+                if wf_m or wt_m:
+                    try:
+                        if wf_m:
+                            y, w = int(wf_m.group(1)), int(wf_m.group(2))
+                            date_from = date.fromisocalendar(y, w, 1).isoformat()  # 월요일
+                        if wt_m:
+                            y, w = int(wt_m.group(1)), int(wt_m.group(2))
+                            date_to = date.fromisocalendar(y, w, 7).isoformat()  # 일요일
+                    except Exception as e:
+                        self._dbg(0, f"[Debug] 주차 범위→날짜 범위 계산 실패: {e}")
 
             # ★ target_datasets 검증: 유효한 데이터셋명만 남기고, 결과가 비었거나
             #   파싱이 이상하면 안전하게 "전체 데이터셋"으로 폴백한다 — 잘못 좁혀서
