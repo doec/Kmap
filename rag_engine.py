@@ -1,6 +1,7 @@
 import sys
 import re
 import json
+import time
 from pathlib import Path
 from neo4j import GraphDatabase
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +13,7 @@ logging.getLogger("neo4j").setLevel(logging.ERROR)
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from llm_util import ask_llm, ask_llm_messages, ask_llm_stream_iter_messages
+from llm_util import ask_llm, ask_llm_messages, ask_llm_stream_iter_messages, LLM
 from embedding_util import get_embedding, node_text
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1570,7 +1571,9 @@ recency_focus 판단 규칙 (매우 중요):
         # [단계 1] 질문 분석 (키워드/날짜 추출)
         yield {'type': 'status', 'text': '🔍 질문 분석 중…'}
 
+        _t_extract_start = time.monotonic()
         extracted          = self._extract_keywords(query)
+        _t_extract = time.monotonic() - _t_extract_start
         extracted_keywords = extracted['keywords']
         author_names       = extracted['author_names']
         date_from          = extracted['date_from']
@@ -1604,6 +1607,7 @@ recency_focus 판단 규칙 (매우 중요):
         hop_label = f"{max(hop_set)}-hop " if hop_set else ""
         yield {'type': 'status', 'text': f'📚 지식 그래프 검색 중… ({hop_label}확장)'}
 
+        _t_retrieve_start = time.monotonic()
         with ThreadPoolExecutor(max_workers=len(search_targets)) as executor:
             futures = {
                 ds: executor.submit(
@@ -1615,9 +1619,12 @@ recency_focus 판단 규칙 (매우 중요):
                 for ds in search_targets
             }
             results = {ds: f.result() for ds, f in futures.items()}
+        _t_retrieve = time.monotonic() - _t_retrieve_start
 
         self.last_retrieved_nodes = list(self._pending_nodes)
         self._dbg(1, f"[Debug] 검색된 노드 수: {len(self.last_retrieved_nodes)}")
+        self._dbg(1, f"[Debug] ⏱ 검색 소요 시간: {_t_retrieve:.2f}초 "
+                     f"(데이터셋 {len(search_targets)}개 병렬, 키워드 추출 {_t_extract:.2f}초 별도)")
 
         sections        = []
         active_datasets = []
@@ -1775,8 +1782,12 @@ recency_focus 판단 규칙 (매우 중요):
         self._dbg(3, "[Debug] ================================")
 
         # [단계 3] LLM 답변 생성 (여기서부터 content 청크가 스트리밍됨)
+        answer_model_name = self.answer_llm or LLM  # None 이면 llm_util 의 .env 기본값(LLM)
+        self._dbg(1, f"[Debug] 답변 생성 모델: {answer_model_name}")
         yield {'type': 'status', 'text': '✍️ 답변 생성 중…'}
 
+        _t_answer_start = time.monotonic()
+        _t_first_chunk = None
         full_result = []
         for chunk in ask_llm_stream_iter_messages(
             messages=messages,
@@ -1784,8 +1795,17 @@ recency_focus 판단 규칙 (매우 중요):
             reasoning_effort="medium",
             llm=self.answer_llm,
         ):
+            if _t_first_chunk is None:
+                _t_first_chunk = time.monotonic() - _t_answer_start
             full_result.append(chunk)
             yield {'type': 'content', 'text': chunk}
+        _t_answer = time.monotonic() - _t_answer_start
+
+        _t_total = time.monotonic() - _t_extract_start
+        self._dbg(1, f"[Debug] ⏱ 답변 생성 소요 시간: {_t_answer:.2f}초 "
+                     f"(첫 응답까지 {_t_first_chunk:.2f}초, 모델: {answer_model_name})")
+        self._dbg(1, f"[Debug] ⏱ 전체 소요 시간: {_t_total:.2f}초 "
+                     f"(질문 분석 {_t_extract:.2f}초 + 검색 {_t_retrieve:.2f}초 + 답변 생성 {_t_answer:.2f}초)")
 
         result = "".join(full_result)
         if result:
