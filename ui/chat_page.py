@@ -361,11 +361,10 @@ def build_chat_page():
                         .classes('flex-grow text-sm')
                         .style('font-size:14px;')
                         .props('outlined rounded dense autogrow')
-                        # ★ Shift 없는 Enter 는 기본 동작(줄바꿈)을 막는다.
-                        #   Vue 내장 수식어 조합(enter.exact.prevent)을 사용 — "다른 보조키
-                        #   (Shift/Ctrl/Alt/Meta) 없이 순수 Enter" 일 때만 매칭되는 내장 기능이라
-                        #   $event.shiftKey 를 직접 검사하는 표현식보다 더 안정적으로 동작한다.
-                        .props('''@keydown.enter.exact.prevent="1"''')
+                        # 줄바꿈 방지(preventDefault)는 아래 .on('keydown.enter.exact.prevent')
+                        # 에서 처리한다 (NiceGUI 가 클라이언트 측 리스너를 올바른 엘리먼트에
+                        # 직접 붙여주고 .prevent 도 브라우저에서 즉시 적용되므로, .props 로
+                        # @keydown 을 넣는 방식보다 안정적으로 동작한다).
                     )
                     send_btn = (
                         ui.button(icon='arrow_upward')
@@ -603,10 +602,13 @@ def build_chat_page():
             send_btn.enable()
 
         async def _on_enter(e):
-            if not e.args.get('shiftKey'):
-                await on_send_message()
+            await on_send_message()
 
         send_btn.on('click', on_send_message)
-        # keydown.enter 만 등록 (prevent 없이) — 줄바꿈 방지는 위 input_box 의 @keydown
-        # Vue 속성이 렌더링 시점에 즉시 처리하므로, 여기서는 전송(send)만 담당한다.
-        input_box.on('keydown.enter', _on_enter)
+        # ★ 단일 바인딩으로 "줄바꿈 방지 + 전송" 을 모두 처리한다.
+        #   - .exact  : Shift/Ctrl/Alt/Meta 등 보조키 없이 순수 Enter 일 때만 발동
+        #               (→ Shift+Enter 는 자연스럽게 줄바꿈으로 통과)
+        #   - .prevent: NiceGUI 가 클라이언트 리스너에 preventDefault 를 걸어주므로,
+        #               서버 왕복 전에 브라우저에서 즉시 줄바꿈 기본동작을 막는다
+        #               (→ 첫 질문에서 줄바꿈이 새던 타이밍 문제 해소)
+        input_box.on('keydown.enter.exact.prevent', _on_enter)
