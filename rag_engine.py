@@ -1591,6 +1591,23 @@ recency_focus 판단 규칙 (매우 중요):
         else:
             dataset_info = "검색된 데이터셋 없음"
 
+        # ★ 여러 데이터셋이 검색된 경우, 답변에서 데이터셋별로 소제목을 강제해
+        #   LLM 이 한쪽(주로 첫 번째)만 요약하고 나머지를 빠뜨리는 문제를 막는다.
+        multi_dataset_rule = ""
+        if len(active_datasets) > 1:
+            heading_list = "\n".join(f"## {ds}" for ds in active_datasets)
+            ds_names = ", ".join(active_datasets)
+            multi_dataset_rule = f"""
+
+[여러 데이터셋 답변 형식 — 반드시 지킬 것]
+이번 검색은 {len(active_datasets)}개 데이터셋({ds_names})에서 결과가 나왔습니다.
+답변은 반드시 아래처럼 데이터셋마다 별도의 마크다운 소제목(##)으로 나누고,
+각 소제목 아래에 그 데이터셋의 내용을 정리하세요. 한 데이터셋도 빠뜨리지 마세요.
+{heading_list}
+- 표로 요약하라는 요청이면, 각 소제목 아래에 그 데이터셋의 표를 각각 만드세요.
+- 어떤 데이터셋의 컨텍스트에 문서가 있으면, 그 소제목을 절대 생략하지 마세요.
+  (해당 섹션에 결과가 실제로 없을 때만 "관련 내용 없음"이라고 적으세요.)"""
+
         date_info = ""
         if date_from or date_to:
             date_info = (f"\n검색 적용 날짜 범위: "
@@ -1638,7 +1655,7 @@ recency_focus 판단 규칙 (매우 중요):
         system_prompt = f"""당신은 DRAM MIM 커패시터 소재 연구 전문가입니다.
 다음 지식 그래프 컨텍스트가 제공됩니다.
 
-{dataset_info}{date_info}{code_info}
+{dataset_info}{date_info}{code_info}{multi_dataset_rule}
 
 답변 규칙:
 - 제공된 컨텍스트와 이전 대화 내용을 적극적으로 활용하여 답하세요.
