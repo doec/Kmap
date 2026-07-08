@@ -362,12 +362,10 @@ def build_chat_page():
                         .style('font-size:14px;')
                         .props('outlined rounded dense autogrow')
                         # ★ Shift 없는 Enter 는 기본 동작(줄바꿈)을 막는다.
-                        #   Vue 템플릿 속성으로 컴포넌트 자체에 바로 붙기 때문에, 별도
-                        #   스크립트를 나중에 주입해 붙이는 방식(ui.run_javascript 폴링)과
-                        #   달리 렌더링 시점에 곧바로 적용되어 타이밍 경쟁(race condition)이
-                        #   없다. (기존 방식은 페이지 로드 직후 아주 빠르게 첫 질문을
-                        #   입력하면 패치가 붙기 전에 Enter 가 눌려 줄바꿈이 새는 문제가 있었음)
-                        .props('''@keydown="$event.key === 'Enter' && !$event.shiftKey && $event.preventDefault()"''')
+                        #   Vue 내장 수식어 조합(enter.exact.prevent)을 사용 — "다른 보조키
+                        #   (Shift/Ctrl/Alt/Meta) 없이 순수 Enter" 일 때만 매칭되는 내장 기능이라
+                        #   $event.shiftKey 를 직접 검사하는 표현식보다 더 안정적으로 동작한다.
+                        .props('''@keydown.enter.exact.prevent="1"''')
                     )
                     send_btn = (
                         ui.button(icon='arrow_upward')
