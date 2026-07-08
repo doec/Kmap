@@ -310,6 +310,19 @@ def build_chat_page():
                     lambda e: setattr(rag, 'doc_score_min', e.value)
                 )
 
+                ui.separator().style('border-color:#e2e8f0; margin:8px 0;')
+
+                # ★ 터미널 디버그 출력량 조절. rag.debug_level 도 인스턴스 속성이라
+                #   즉시 반영된다 (서버 재시작 불필요).
+                ui.label('디버그 출력량').style('font-size:11px; color:#94a3b8; margin-top:4px;')
+                debug_level_select = ui.select(
+                    {0: '0 - 에러만', 1: '1 - 요약 (기본)', 2: '2 - 보통', 3: '3 - 상세(전체)'},
+                    value=rag.debug_level,
+                ).props('dense outlined').style('width:100%;')
+                debug_level_select.on_value_change(
+                    lambda e: setattr(rag, 'debug_level', e.value)
+                )
+
             ui.separator().style('border-color:#e2e8f0;')
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────

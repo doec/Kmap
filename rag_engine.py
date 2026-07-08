@@ -148,6 +148,11 @@ DEFAULT_SEARCH_MODE  = None   # None / 'text' / 'vector' / 'hybrid'
 RRF_K             = 60
 MAX_HISTORY_TURNS = 5
 
+# ★ 디버그 출력 레벨 기본값. .env 의 KMAP_DEBUG_LEVEL 로 앱 전체 기본값을 바꿀 수 있고,
+#   세션별로는 사이드바 UI에서 rag.debug_level 을 즉시 조정할 수 있다 (재시작 불필요).
+#   0=에러만, 1=요약(기본값), 2=보통, 3=상세(개별 결과·전체 프롬프트까지 전부 출력)
+DEFAULT_DEBUG_LEVEL = int(os.getenv('KMAP_DEBUG_LEVEL', '1'))
+
 # 문서 섹션 관련 상수
 DOC_SEARCH_LIMIT  = 5     # 문서 단위 벡터/키워드 검색으로 가져올 문서 개수 (B/C 기능)
 DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷 (초록/전문처럼 긴 텍스트끼리 비교)
@@ -353,12 +358,24 @@ class GraphRAG:
         self.relative_gap     = RELATIVE_SCORE_GAP        # 1등 대비 상대 컷오프
         self.doc_score_min    = DOC_SCORE_MIN             # 문서 벡터 검색 절대 하한
 
+        # ★ 디버그 출력 레벨 — 세션별 조정 가능 (사이드바 UI에서 rag.debug_level 로 변경).
+        #   0 = 끔 (에러만)
+        #   1 = 요약 (질문/키워드/최종 채널별 개수 등 핵심 정보만) — 기본값
+        #   2 = 보통 (모드/폴백/컷오프 적용 전후 등 중간 단계 정보 추가)
+        #   3 = 상세 (개별 결과 점수 나열, 전체 컨텍스트/LLM 프롬프트 원문까지 전부)
+        self.debug_level = DEFAULT_DEBUG_LEVEL
+
+    def _dbg(self, level: int, *args, **kwargs):
+        """level <= self.debug_level 일 때만 출력. 에러(level=0)는 항상 출력된다."""
+        if self.debug_level >= level:
+            print(*args, **kwargs)
+
     def close(self):
         self.driver.close()
 
     def clear_history(self):
         self.history = []
-        print("[Debug] 대화 히스토리 초기화")
+        self._dbg(2, "[Debug] 대화 히스토리 초기화")
 
     def _extract_keywords(self, query: str) -> dict:
         """
@@ -514,7 +531,7 @@ recency_focus 판단 규칙 (매우 중요):
                         date_from = date.fromisocalendar(y, w, 1).isoformat()  # 월요일
                         date_to   = date.fromisocalendar(y, w, 7).isoformat()  # 일요일
                     except Exception as e:
-                        print(f"[Debug] 주차→날짜 범위 계산 실패: {e}")
+                        self._dbg(0, f"[Debug] 주차→날짜 범위 계산 실패: {e}")
 
             # ★ target_datasets 검증: 유효한 데이터셋명만 남기고, 결과가 비었거나
             #   파싱이 이상하면 안전하게 "전체 데이터셋"으로 폴백한다 — 잘못 좁혀서
@@ -535,7 +552,7 @@ recency_focus 판단 규칙 (매우 중요):
                 'target_datasets': target_datasets,
             }
         except Exception as e:
-            print(f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
+            self._dbg(0, f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
             return {'keywords': query, 'date_from': None, 'date_to': None,
                     'recency_focus': False, 'year_week': None,
                     'target_datasets': list(DATASETS.keys())}
@@ -762,16 +779,16 @@ recency_focus 판단 규칙 (매우 중요):
             if rows:
                 scores = [r['vec_score'] for r in rows if r.get('vec_score') is not None]
                 if scores:
-                    print(f"[Debug] {dataset} 엔티티 벡터 점수 분포: "
+                    self._dbg(2, f"[Debug] {dataset} 엔티티 벡터 점수 분포: "
                           f"min={min(scores):.3f} max={max(scores):.3f} "
                           f"avg={sum(scores)/len(scores):.3f} (컷={self.entity_score_min}, {len(scores)}건)")
                     # 결과 하나하나의 점수를 다 찍으면 (최대 limit*3=150건) 터미널이
-                    # 감당 안 되므로, 튜닝에 필요한 상위 _DEBUG_ROW_PREVIEW 개만 보여준다.
+                    # 감당 안 되므로, level 3(상세)에서만 상위 _DEBUG_ROW_PREVIEW 개를 보여준다.
                     for r in rows[:_DEBUG_ROW_PREVIEW]:
-                        print(f"  [Debug]   score={r['vec_score']:.3f}  "
+                        self._dbg(3, f"  [Debug]   score={r['vec_score']:.3f}  "
                               f"({r.get('sname')}) --[{r.get('rel')}]--> ({r.get('oname')})")
                     if len(rows) > _DEBUG_ROW_PREVIEW:
-                        print(f"  [Debug]   ... 외 {len(rows) - _DEBUG_ROW_PREVIEW}건 생략")
+                        self._dbg(3, f"  [Debug]   ... 외 {len(rows) - _DEBUG_ROW_PREVIEW}건 생략")
 
                     # ★ 상대 컷오프: BGE-M3 는 무관한 쌍도 baseline 유사도가 높아
                     #   절대값 컷(entity_score_min)만으로는 옥석이 안 걸러진다.
@@ -782,11 +799,11 @@ recency_focus 판단 규칙 (매우 중요):
                             if r.get('vec_score') is not None
                             and top_score - r['vec_score'] <= self.relative_gap]
                     if len(rows) != before:
-                        print(f"[Debug] {dataset} 상대 컷오프 적용(gap≤{self.relative_gap}): "
+                        self._dbg(2, f"[Debug] {dataset} 상대 컷오프 적용(gap≤{self.relative_gap}): "
                               f"{before}건 → {len(rows)}건")
             return rows
         except Exception as e:
-            print(f"[Debug] {dataset} vector 검색 실패 → text 결과만 사용: {e}")
+            self._dbg(0, f"[Debug] {dataset} vector 검색 실패 → text 결과만 사용: {e}")
             return []
 
     def _vector_retrieve_2hop(self, query_text: str, dataset: str, cfg: dict,
@@ -849,7 +866,7 @@ recency_focus 판단 규칙 (매우 중요):
             with self.driver.session() as session:
                 hop2_rows = [dict(r) for r in session.run(query_str, **params)]
         except Exception as e:
-            print(f"[Debug] {dataset} 벡터 2-hop 확장 실패: {e}")
+            self._dbg(0, f"[Debug] {dataset} 벡터 2-hop 확장 실패: {e}")
             hop2_rows = []
 
         seen: dict = {}
@@ -857,7 +874,7 @@ recency_focus 판단 규칙 (매우 중요):
             key = f"{r.get('sname')}|{r.get('rel')}|{r.get('oname')}"
             seen[key] = r
 
-        print(f"[Debug] {dataset} 벡터 2-hop: 1차 {len(hop1_rows)}개 + "
+        self._dbg(2, f"[Debug] {dataset} 벡터 2-hop: 1차 {len(hop1_rows)}개 + "
               f"2차(인과·성능 확장) {len(hop2_rows)}개 → 중복 제거 후 {min(len(seen), limit)}개")
         return list(seen.values())[:limit]
 
@@ -901,7 +918,7 @@ recency_focus 판단 규칙 (매우 중요):
             # 깨지므로 병합 후 다시 날짜 내림차순으로 재정렬한다. (날짜 없는 항목은 뒤로)
             results.sort(key=lambda r: r.get('date') or '', reverse=True)
 
-        print(f"[Debug] {dataset} 2-hop: 1차 {len(hop1_rows)}개 + "
+        self._dbg(2, f"[Debug] {dataset} 2-hop: 1차 {len(hop1_rows)}개 + "
               f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(results), limit)}개")
         return results[:limit]
 
@@ -941,20 +958,20 @@ recency_focus 판단 규칙 (매우 중요):
             with self.driver.session() as session:
                 rows = [dict(r) for r in session.run(query_str, **params)]
             if rows:
-                print(f"[Debug] 문서 벡터 검색 결과 (컷={self.doc_score_min}, {len(rows)}건):")
+                self._dbg(2, f"[Debug] 문서 벡터 검색 결과 (컷={self.doc_score_min}, {len(rows)}건):")
                 for r in rows:
-                    print(f"  [Debug]   score={r['score']:.3f}  doc_id={r.get('doc_id')}")
+                    self._dbg(3, f"  [Debug]   score={r['score']:.3f}  doc_id={r.get('doc_id')}")
 
                 # ★ 상대 컷오프 (엔티티 벡터 검색과 동일한 이유)
                 top_score = max(r['score'] for r in rows)
                 before = len(rows)
                 rows = [r for r in rows if top_score - r['score'] <= self.relative_gap]
                 if len(rows) != before:
-                    print(f"[Debug] 문서 벡터 상대 컷오프 적용(gap≤{self.relative_gap}): "
+                    self._dbg(2, f"[Debug] 문서 벡터 상대 컷오프 적용(gap≤{self.relative_gap}): "
                           f"{before}건 → {len(rows)}건")
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
-            print(f"[Debug] 문서 벡터 검색 실패: {e}")
+            self._dbg(0, f"[Debug] 문서 벡터 검색 실패: {e}")
             return []
 
     # ── C 기능: 문서 본문 키워드(FULLTEXT) 검색 ─────────────────────────────────
@@ -1008,7 +1025,7 @@ recency_focus 판단 규칙 (매우 중요):
                     rows = [dict(r) for r in session.run(query_str, **params)]
                 doc_ids.extend(r['doc_id'] for r in rows if r.get('doc_id'))
             except Exception as e:
-                print(f"[Debug] 문서 FULLTEXT 검색 실패 ({ft_index}): {e}")
+                self._dbg(0, f"[Debug] 문서 FULLTEXT 검색 실패 ({ft_index}): {e}")
         return doc_ids
 
     # ── D 기능: 저자명으로 문서 직접 검색 ────────────────────────────────────────
@@ -1052,7 +1069,7 @@ recency_focus 판단 규칙 (매우 중요):
                 rows = [dict(r) for r in session.run(query_str, keywords=keywords, limit=limit)]
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
-            print(f"[Debug] 저자 검색 실패: {e}")
+            self._dbg(0, f"[Debug] 저자 검색 실패: {e}")
             return []
 
     # ── E 기능: 주차(week)로 문서 정확 매칭 검색 ─────────────────────────────────
@@ -1085,7 +1102,7 @@ recency_focus 판단 규칙 (매우 중요):
                 rows = [dict(r) for r in session.run(query_str, year_week=year_week)]
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
-            print(f"[Debug] 주차 검색 실패: {e}")
+            self._dbg(0, f"[Debug] 주차 검색 실패: {e}")
             return []
 
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
@@ -1136,7 +1153,7 @@ recency_focus 판단 규칙 (매우 중요):
             with self.driver.session() as session:
                 docs = [dict(r) for r in session.run(query_str, ids=list(doc_ids))]
         except Exception as e:
-            print(f"[Debug] 문서 조회 실패: {e}")
+            self._dbg(0, f"[Debug] 문서 조회 실패: {e}")
             return ""
 
         if not docs:
@@ -1191,7 +1208,7 @@ recency_focus 판단 규칙 (매우 중요):
             norm_kw    = _normalize_query(keywords_str)
             norm_query = _normalize_query(query_text)
             if norm_kw != keywords_str or norm_query != query_text:
-                print(f"[Debug] {dataset} 질의 정규화: '{query_text}' → '{norm_query}'")
+                self._dbg(2, f"[Debug] {dataset} 질의 정규화: '{query_text}' → '{norm_query}'")
 
             # 키워드/FULLTEXT 검색: 원본 + 정규화 키워드를 모두 사용한다.
             #   - 원본 키워드(BD30 등) → content(원본 코드) / 원본 엔티티명 매칭
@@ -1211,13 +1228,13 @@ recency_focus 판단 규칙 (매우 중요):
         requested_mode = search_mode
 
         if search_mode in ('vector', 'hybrid') and not vector_index:
-            print(f"[Debug] {dataset}: 엔티티 벡터 index 없음 → 트리플 검색만 text 모드로 폴백")
+            self._dbg(2, f"[Debug] {dataset}: 엔티티 벡터 index 없음 → 트리플 검색만 text 모드로 폴백")
             search_mode = 'text'
 
-        print(f"[Debug] {dataset} | mode: {search_mode} | hop: {hops}")
+        self._dbg(2, f"[Debug] {dataset} | mode: {search_mode} | hop: {hops}")
         # ★ 실제 검색에 쓰이는 최종 키워드/질의 문자열 (정규화 반영 후)
-        print(f"[Debug] {dataset} 실제 검색 키워드(text/fulltext): '{keywords_str}'")
-        print(f"[Debug] {dataset} 실제 검색 질의(vector): '{query_text}'")
+        self._dbg(2, f"[Debug] {dataset} 실제 검색 키워드(text/fulltext): '{keywords_str}'")
+        self._dbg(2, f"[Debug] {dataset} 실제 검색 질의(vector): '{query_text}'")
 
         if search_mode == 'text':
             rows = (self._text_retrieve_2hop(keywords_str, dataset, cfg, limit, date_from, date_to,
@@ -1288,13 +1305,13 @@ recency_focus 판단 규칙 (매우 중요):
         ids_d = set(self._doc_author_retrieve(keywords_str, cfg))       # D: 저자명 직접 검색 (모든 모드)
         ids_e = set(self._doc_week_retrieve(year_week, cfg))             # E: 주차 정확 매칭 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
-        print(f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
+        self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
               f"E(주차)={len(ids_e)} → 합집합 {len(doc_ids)}")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus)
         if doc_ids and not docs_ctx:
-            print(f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
+            self._dbg(0, f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
                   f"(doc_id 불일치 또는 doc_label/속성 확인 필요). 예시 id: {list(doc_ids)[:3]}")
 
         # ── 트리플/문서 컨텍스트 결합 ────────────────────────────────────────────
@@ -1321,9 +1338,9 @@ recency_focus 판단 규칙 (매우 중요):
         self._pending_nodes = set()
         self.last_retrieved_nodes = []
 
-        print(f"\n[Debug] ========================================")
-        print(f"[Debug] 질문: {query}")
-        print(f"[Debug] 데이터셋: {dataset}")
+        self._dbg(1, f"\n[Debug] ========================================")
+        self._dbg(1, f"[Debug] 질문: {query}")
+        self._dbg(1, f"[Debug] 데이터셋: {dataset}")
 
         # [단계 1] 질문 분석 (키워드/날짜 추출)
         yield {'type': 'status', 'text': '🔍 질문 분석 중…'}
@@ -1336,11 +1353,9 @@ recency_focus 판단 규칙 (매우 중요):
         year_week          = extracted['year_week']
         target_datasets    = extracted['target_datasets']
 
-        print(f"[Debug] 추출된 키워드: {extracted_keywords}")
-        print(f"[Debug] 날짜 범위: {date_from} ~ {date_to}")
-        print(f"[Debug] 최신순 정렬 필요: {recency_focus}")
-        print(f"[Debug] 감지된 주차: {year_week}")
-        print(f"[Debug] LLM 선택 데이터셋: {target_datasets}")
+        self._dbg(1, f"[Debug] 추출된 키워드: {extracted_keywords}")
+        self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
+              f"주차: {year_week} | 선택된 데이터셋: {target_datasets}")
 
         if dataset and dataset != 'All' and dataset in DATASETS:
             # 사용자가 특정 탭을 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
@@ -1370,14 +1385,16 @@ recency_focus 판단 규칙 (매우 중요):
             results = {ds: f.result() for ds, f in futures.items()}
 
         self.last_retrieved_nodes = list(self._pending_nodes)
-        print(f"[Debug] 검색된 노드 수: {len(self.last_retrieved_nodes)}")
+        self._dbg(1, f"[Debug] 검색된 노드 수: {len(self.last_retrieved_nodes)}")
 
         sections        = []
         active_datasets = []
 
         for ds, context in results.items():
             desc = DATASETS[ds]['description']
-            print(f"[Debug] {ds} 검색 결과:\n{context}\n")
+            # ★ 데이터셋별 전체 컨텍스트 원문(트리플+문서 본문 전부)은 분량이 매우 커서
+            #   가장 터미널을 어지럽히는 항목 중 하나 — level 3(상세)에서만 출력.
+            self._dbg(3, f"[Debug] {ds} 검색 결과:\n{context}\n")
             if context != _NO_RESULT:
                 sections.append(f"=== {ds} ({desc}) ===\n{context}")
                 active_datasets.append(ds)
@@ -1433,12 +1450,12 @@ recency_focus 판단 규칙 (매우 중요):
 
         # ★ 디버그: LLM 프롬프트에 실제로 들어가는 "코드↔물질명 매핑" 섹션만 따로 출력.
         #   이 섹션이 비어 있으면(아래 (없음)) LLM 은 코드와 물질명을 연결하지 못한다.
-        print("[Debug] ===== 코드↔물질명 매핑 (LLM 프롬프트에 삽입될 내용) =====")
-        print(f"  모듈 로드 여부: {_NORMALIZE_AVAILABLE} "
+        self._dbg(2, "[Debug] ===== 코드↔물질명 매핑 (LLM 프롬프트에 삽입될 내용) =====")
+        self._dbg(2, f"  모듈 로드 여부: {_NORMALIZE_AVAILABLE} "
               f"(CODE_MAP 항목 수: {len(_CODE_MAP) if _CODE_MAP else 0})")
-        print(f"  원본 질문: '{query}'")
-        print(f"  감지된 매핑: {code_map_found if code_map_found else '(없음 — 프롬프트에 매핑 섹션 미삽입)'}")
-        print("[Debug] ===========================================================")
+        self._dbg(2, f"  원본 질문: '{query}'")
+        self._dbg(2, f"  감지된 매핑: {code_map_found if code_map_found else '(없음 — 프롬프트에 매핑 섹션 미삽입)'}")
+        self._dbg(2, "[Debug] ===========================================================")
 
         system_prompt = f"""당신은 DRAM MIM 커패시터 소재 연구 전문가입니다.
 다음 지식 그래프 컨텍스트가 제공됩니다.
@@ -1489,12 +1506,13 @@ recency_focus 판단 규칙 (매우 중요):
         messages.extend(self.history)
         messages.append({"role": "user", "content": user_message_content})
 
-        # ★ 디버그: LLM 에 실제로 전달되는 프롬프트 전문을 그대로 출력한다.
-        print("[Debug] ===== LLM 시스템 프롬프트 =====")
-        print(system_prompt)
-        print("[Debug] ===== LLM 사용자 메시지 =====")
-        print(user_message_content)
-        print("[Debug] ================================")
+        # ★ 디버그: LLM 에 실제로 전달되는 프롬프트 전문 — 분량이 가장 크므로
+        #   level 3(상세)에서만 출력한다.
+        self._dbg(3, "[Debug] ===== LLM 시스템 프롬프트 =====")
+        self._dbg(3, system_prompt)
+        self._dbg(3, "[Debug] ===== LLM 사용자 메시지 =====")
+        self._dbg(3, user_message_content)
+        self._dbg(3, "[Debug] ================================")
 
         # [단계 3] LLM 답변 생성 (여기서부터 content 청크가 스트리밍됨)
         yield {'type': 'status', 'text': '✍️ 답변 생성 중…'}
@@ -1516,4 +1534,4 @@ recency_focus 판단 규칙 (매우 중요):
             max_messages = MAX_HISTORY_TURNS * 2
             if len(self.history) > max_messages:
                 self.history = self.history[-max_messages:]
-                print(f"[Debug] 히스토리 트리밍: 최근 {MAX_HISTORY_TURNS}턴 유지")
+                self._dbg(2, f"[Debug] 히스토리 트리밍: 최근 {MAX_HISTORY_TURNS}턴 유지")
