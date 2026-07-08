@@ -183,6 +183,11 @@ DOC_BODY_MAXLEN   = 700   # 답변 컨텍스트에 넣을 문서 본문(abstract
 #   자르면 최근 문서를 놓칠 수 있으므로 훨씬 넉넉하게 잡는다.
 AUTHOR_SEARCH_LIMIT = 30
 
+# ★ 주차 "범위" 열거 검색(E 채널)의 상한. "10~15주차 보고문서 전부" 같은 질문은
+#   관련도가 아니라 그 기간의 문서 자체를 원하므로 relevance 컷 없이 전부 담되,
+#   너무 넓은 범위에서 컨텍스트가 폭주하지 않도록 안전 상한을 둔다(최신순 우선).
+WEEK_RANGE_LIMIT = 60
+
 # 엔티티 벡터 검색(짧은 "name (type)" 텍스트 vs 긴 질문 문장) 최소 유사도 컷.
 # ★ 실측 결과, BGE-M3 임베딩은 무관한 쌍끼리도 코사인 유사도가 0.8 근처에서
 #   시작하는 baseline 이 높아 절대값 컷오프로는 관련/무관을 구분하기 어렵다
@@ -1211,34 +1216,55 @@ recency_focus 판단 규칙 (매우 중요):
             self._dbg(0, f"[Debug] 저자 검색 실패: {e}")
             return []
 
-    # ── E 기능: 주차(week)로 문서 정확 매칭 검색 ─────────────────────────────────
-    def _doc_week_retrieve(self, year_week: str, cfg: dict) -> list[str]:
+    # ── E 기능: 주차(week)로 문서 정확 매칭 / 범위 열거 검색 ──────────────────────
+    def _doc_week_retrieve(self, year_week: str, cfg: dict,
+                           yw_from: str = None, yw_to: str = None) -> list[str]:
         """
-        Report/Confl_doc 메타 노드의 year_week 속성을 정확히(exact match) 검색한다.
+        Report/Confl_doc 메타 노드의 year_week 속성으로 문서를 찾는다.
 
-        "2026년 26주차 보고내용 보여줘" 같은 질문은 "관련도 상위 몇 개"가 아니라
-        "그 주차에 해당하는 문서 전부"를 원하는 열거형(enumeration) 질문이다.
-        B(벡터)/C(FULLTEXT)는 관련도 기준이라 한 문서가 순위에서 밀려 누락될 수
-        있으므로, D(저자)와 마찬가지로 필드를 정확히 매칭하는 전용 채널을 둔다.
-        LIMIT 을 두지 않는다 — 특정 주차의 문서 수는 원래 적으므로 전부 반환해도
-        컨텍스트 폭주 위험이 낮다.
+        두 가지 모드:
+          (1) 단일 주차(year_week): 그 주차 정확 매칭
+          (2) 주차 범위(yw_from~yw_to): 그 범위에 속하는 문서 열거
+
+        "2026년 26주차 보고내용" 또는 "10~15주차 보고문서 전부" 같은 질문은
+        "관련도 상위 몇 개"가 아니라 "그 기간에 해당하는 문서 전부"를 원하는
+        열거형(enumeration) 질문이다. B(벡터)/C(FULLTEXT)는 관련도 기준이라
+        일반적인 키워드("보고문서/요약")로는 대부분 컷오프에 걸려 누락되므로,
+        기간이 명시된 경우 이 채널이 relevance 컷 없이 문서를 그대로 담아준다.
+
+        ★ Cypher 문자열 비교는 대소문자를 구분하고, "YYYY-WNN"(2자리 0-패딩) 포맷은
+          사전식 비교가 연대순과 일치하므로 toLower() 로 맞춘 뒤 부등호로 범위를 건다.
         """
         doc_label = cfg.get('doc_label')
-        if not doc_label or not year_week:
+        if not doc_label:
             return []
 
-        # ★ Cypher 문자열 비교는 대소문자를 구분한다. DB에는 소문자 'w'로 저장돼
-        #   있는데(예: "2026-w26") 우리 쪽 정규화는 대문자 'W'를 쓰므로,
-        #   toLower() 로 양쪽을 맞춰 대소문자와 무관하게 매칭한다.
+        if year_week:
+            where = "toLower(m.year_week) = toLower($year_week)"
+            params = {'year_week': year_week, 'limit': WEEK_RANGE_LIMIT}
+        elif yw_from or yw_to:
+            conds = []
+            params = {'limit': WEEK_RANGE_LIMIT}
+            if yw_from:
+                conds.append("toLower(m.year_week) >= toLower($yw_from)")
+                params['yw_from'] = yw_from
+            if yw_to:
+                conds.append("toLower(m.year_week) <= toLower($yw_to)")
+                params['yw_to'] = yw_to
+            where = "m.year_week IS NOT NULL AND " + " AND ".join(conds)
+        else:
+            return []
+
         query_str = f"""
             MATCH (m:{doc_label})
-            WHERE toLower(m.year_week) = toLower($year_week)
+            WHERE {where}
             RETURN m.doc_id AS doc_id
             ORDER BY m.date DESC
+            LIMIT $limit
         """
         try:
             with self.driver.session() as session:
-                rows = [dict(r) for r in session.run(query_str, year_week=year_week)]
+                rows = [dict(r) for r in session.run(query_str, **params)]
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
             self._dbg(0, f"[Debug] 주차 검색 실패: {e}")
@@ -1444,7 +1470,7 @@ recency_focus 판단 규칙 (매우 중요):
         ids_b = set(self._doc_vector_retrieve(query_text, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if requested_mode in ('vector', 'hybrid') else set()   # B
         ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if requested_mode in ('text', 'hybrid') else set()  # C
         ids_d = set(self._doc_author_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to))  # D: 저자명 직접 검색 (모든 모드)
-        ids_e = set(self._doc_week_retrieve(year_week, cfg))             # E: 주차 정확 매칭 (모든 모드)
+        ids_e = set(self._doc_week_retrieve(year_week, cfg, yw_from=year_week_from, yw_to=year_week_to))  # E: 주차 정확/범위 매칭 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
         self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
