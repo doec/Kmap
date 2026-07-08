@@ -28,10 +28,26 @@ _DOI_RE = re.compile(
 )
 
 
+# 수식 구분자 변환용 정규식.
+# ★ LLM 은 수식을 $...$ / $$...$$ 로 감싸는데, 마크다운이 그 사이의 '_', '*' 를
+#   이탤릭으로 처리하면서 '$' 를 일부만 소비해 잔여 '$' 가 화면에 남는 문제가 있었다.
+#   그래서 마크다운 처리 전에 '$' 구분자를 MathJax 기본 구분자인 \(...\) / \[...\] 로
+#   바꿔 리터럴 '$' 자체를 없앤다. (display($$) 를 inline($) 보다 먼저 변환)
+_MATH_DISPLAY_RE = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
+_MATH_INLINE_RE  = re.compile(r'\$(?!\s)([^\$\n]+?)(?<!\s)\$')
+
+
+def _convert_math_delims(text: str) -> str:
+    text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
+    text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
+    return text
+
+
 def _linkify(text: str) -> str:
     """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다. (URL에 붙은 ** 제거)"""
     if not text:
         return text
+    text = _convert_math_delims(text)
     text = _BARE_URL_RE.sub(lambda m: f'[{m.group(1)}]({m.group(1)})', text)
     text = _DOI_RE.sub(
         lambda m: f'[{m.group(1)}](https://doi.org/{m.group(2)})', text
@@ -137,6 +153,8 @@ def build_chat_page():
                 inlineMath: [['$', '$'], ['\\(', '\\)']],
                 displayMath: [['$$', '$$'], ['\\[', '\\]']]
             },
+            // scale 0.9 로 주위 본문 글자 크기와 비슷하게 맞춘다 (기본값은 살짝 더 큼)
+            chtml: { scale: 0.9, matchFontHeight: true },
             options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
         };
     </script>
@@ -180,6 +198,10 @@ def build_chat_page():
 
         /* sidebar resize handle */
         #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
+
+        /* 인라인 수식이 본문 글자 크기와 어긋나지 않게 */
+        .ai-bubble mjx-container { font-size: inherit !important; }
+        .ai-bubble mjx-container[display="true"] { margin: 0.4em 0 !important; }
     </style>
     <script>
         // 답변이 렌더링/갱신된 뒤 호출하면 새로 들어온 수식을 다시 typeset 한다.
