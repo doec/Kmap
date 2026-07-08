@@ -61,6 +61,27 @@ def _normalize_query(text: str) -> str:
         return text
 
 
+def _split_keywords(keywords_str: str) -> list[str]:
+    """
+    "이창수, Lee Changsoo" 같은 키워드 문자열을 쉼표 기준으로만 나눈다
+    (공백으로도 나누면 "Lee Changsoo" 가 "Lee"/"Changsoo" 로 쪼개져 지나치게
+    광범위하게 매칭되는 문제가 있다 — 자세한 이유는 이 함수를 쓰는 곳들 참고).
+
+    ★ 안전장치: LLM 이 가끔 "이창수 (Lee Changsoo)" 처럼 괄호로 번역을 덧붙여
+    출력하는 경우가 있는데, DB 값은 괄호 없는 순수 텍스트("이창수")만 저장돼
+    있어 CONTAINS 매칭이 실패한다. 여기서 각 항목의 괄호+내용을 제거해 방어한다.
+    (프롬프트에서도 이런 형식을 쓰지 말라고 지시하지만, 이중 안전장치로 코드에서도 처리)
+    """
+    if not keywords_str:
+        return []
+    cleaned = []
+    for kw in keywords_str.split(","):
+        kw = re.sub(r'\s*\([^)]*\)\s*', ' ', kw).strip()
+        if kw:
+            cleaned.append(kw)
+    return cleaned
+
+
 def _detect_codes(text: str) -> dict:
     """
     질문 문자열에 CODE_MAP 의 코드(예: "D1", "BD30")가 등장하는지 검사해
@@ -483,10 +504,19 @@ recency_focus 판단 규칙 (매우 중요):
   최신순 정렬이 자연스러우므로 recency_focus: true 로 표시하세요.
 - 날짜/최근 관련 언급이 전혀 없으면 → false
 
+키워드 형식 규칙 (매우 중요 — 이 형식을 안 지키면 검색이 실패합니다):
+- keywords 는 반드시 "순수한 단어/구를 쉼표로 나열"한 문자열이어야 합니다.
+- ★ 절대 괄호로 번역이나 부가설명을 덧붙이지 마세요. 각 언어 표현은 별도의
+  쉼표 항목으로 분리하세요.
+- 올바른 예: "이창수, Lee Changsoo, 보고서, Report"
+- 잘못된 예: "이창수 (Lee Changsoo), 보고서 (Report)"  ← 괄호가 붙으면 DB 값과
+  정확히 일치하지 않아 검색이 실패합니다 (예: DB에는 "이창수"만 저장되어 있는데
+  검색어가 "이창수 (Lee Changsoo)"이면 매칭이 안 됨).
+
 키워드 추출 규칙:
 1. 핵심 명사(엔티티) 위주로 추출
-2. 한국어 키워드는 반드시 영어 번역도 함께 추출
-3. 관련 동의어/유사어도 포함
+2. 한국어 키워드는 반드시 영어 번역도 "별도의 쉼표 항목"으로 함께 추출
+3. 관련 동의어/유사어도 포함 (역시 별도 쉼표 항목으로)
 4. 날짜 관련 표현은 키워드에서 제외
 5. 저자/작성자 이름이 언급되면 반드시 키워드에 포함하되, "연구원", "박사", "교수",
    "님", "씨" 같은 직함/호칭은 이름에서 떼어내고 순수한 이름만 넣으세요.
@@ -677,12 +707,7 @@ recency_focus 판단 규칙 (매우 중요):
           LIMIT 에 걸려 짤린 "진짜로 최신인데 confidence 가 낮은" 트리플을
           영영 놓치게 된다.
         """
-        # ★ 쉼표로만 나눈다 (공백 분리 X). "Lee Changsoo" 처럼 여러 단어로 된 키워드가
-        #   "Lee" / "Changsoo" 로 쪼개지면, CONTAINS 매칭이 "Lee"라는 흔한 성씨 하나만
-        #   으로도 걸려서 전혀 다른 사람(예: "Lee Jaeho")까지 잘못 매칭되는 문제가 있었다.
-        #   (마찬가지로 "La doping" 같은 두 단어 물질명도 "La"/"doping" 각각으로 쪼개지면
-        #   너무 광범위하게 매칭되는 문제가 있었음 — 이 문제도 함께 해결됨)
-        keywords      = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
+        keywords      = _split_keywords(keywords_str)
         return_fields = cfg['return_fields']
         return_clause = self._build_return_clause(return_fields)
         where_parts, params = self._build_where(cfg, keywords, date_from, date_to)
@@ -935,7 +960,8 @@ recency_focus 판단 규칙 (매우 중요):
 
     # ── B 기능: 문서 단위 벡터 검색 ────────────────────────────────────────────
     def _doc_vector_retrieve(self, query_text: str, cfg: dict,
-                             limit: int = DOC_SEARCH_LIMIT) -> list[str]:
+                             limit: int = DOC_SEARCH_LIMIT,
+                             date_from: str = None, date_to: str = None) -> list[str]:
         """
         Paper/Report 메타 노드를 대상으로 벡터 검색을 수행해 관련 문서의
         doc_id 목록을 돌려준다.
@@ -952,10 +978,19 @@ recency_focus 판단 규칙 (매우 중요):
             return []
 
         q_emb = get_embedding(query_text)
-        query_str = """
+        # ★ date_from/date_to 필터: 없으면 "2026년 관련 보고서" 처럼 기간이 지정된
+        #   질문에서도 벡터 유사도만 보고 연도 제한이 전혀 안 걸려 다른 연도 문서까지
+        #   섞여 나오는 문제가 있었다.
+        date_filter = ""
+        if date_from:
+            date_filter += " AND node.date >= $date_from"
+        if date_to:
+            date_filter += " AND node.date <= $date_to"
+
+        query_str = f"""
             CALL db.index.vector.queryNodes($index, $limit, $q_emb)
             YIELD node, score
-            WHERE score > $score_min
+            WHERE score > $score_min {date_filter}
             RETURN node.doc_id AS doc_id, score
             ORDER BY score DESC
         """
@@ -964,6 +999,8 @@ recency_focus 판단 규칙 (매우 중요):
             'limit':     limit,
             'q_emb':     q_emb,
             'score_min': self.doc_score_min,
+            'date_from': date_from,
+            'date_to':   date_to,
         }
         try:
             with self.driver.session() as session:
@@ -987,7 +1024,8 @@ recency_focus 판단 규칙 (매우 중요):
 
     # ── C 기능: 문서 본문 키워드(FULLTEXT) 검색 ─────────────────────────────────
     def _doc_fulltext_retrieve(self, keywords_str: str, cfg: dict,
-                               limit: int = DOC_SEARCH_LIMIT) -> list[str]:
+                               limit: int = DOC_SEARCH_LIMIT,
+                               date_from: str = None, date_to: str = None) -> list[str]:
         """
         doc_fulltext_index 로 지정된 FULLTEXT 인덱스에서 문서 본문 키워드를 검색해
         관련 문서의 doc_id 목록을 돌려준다.
@@ -1007,13 +1045,11 @@ recency_focus 판단 규칙 (매우 중요):
         if isinstance(ft_indexes, str):
             ft_indexes = [ft_indexes]
 
-        # ★ 쉼표로만 나눈다 (공백 분리 X) — "Lee Changsoo" 같은 여러 단어 키워드가
-        #   쪼개지지 않도록 (자세한 이유는 _text_retrieve_raw 주석 참고).
         # Lucene 질의 문자열 구성:
         # 키워드에 '/'·'-' 등 Lucene 특수문자가 있으면 파싱 오류가 나므로,
         # 각 키워드를 큰따옴표로 감싼 구(phrase)로 만들고 내부 특수문자는 이스케이프한다.
         # 따옴표로 감싼 구들을 공백으로 이으면 Lucene 기본 OR(should) 매칭이 된다.
-        keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
+        keywords = _split_keywords(keywords_str)
         if not keywords:
             return []
 
@@ -1022,15 +1058,24 @@ recency_focus 판단 규칙 (매우 중요):
 
         lucene_query = " ".join(f'"{_escape(kw)}"' for kw in keywords)
 
-        query_str = """
-            CALL db.index.fulltext.queryNodes($index, $q, {limit: $limit})
+        # ★ date_from/date_to 필터 (다른 문서 채널과 동일한 이유)
+        date_filter = ""
+        if date_from:
+            date_filter += " AND node.date >= $date_from"
+        if date_to:
+            date_filter += " AND node.date <= $date_to"
+
+        query_str = f"""
+            CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
             YIELD node, score
+            WHERE true {date_filter}
             RETURN node.doc_id AS doc_id, score
             ORDER BY score DESC
         """
         doc_ids: list[str] = []
         for ft_index in ft_indexes:
-            params = {'index': ft_index, 'q': lucene_query, 'limit': limit}
+            params = {'index': ft_index, 'q': lucene_query, 'limit': limit,
+                      'date_from': date_from, 'date_to': date_to}
             try:
                 with self.driver.session() as session:
                     rows = [dict(r) for r in session.run(query_str, **params)]
@@ -1041,7 +1086,8 @@ recency_focus 판단 규칙 (매우 중요):
 
     # ── D 기능: 저자명으로 문서 직접 검색 ────────────────────────────────────────
     def _doc_author_retrieve(self, keywords_str: str, cfg: dict,
-                             limit: int = AUTHOR_SEARCH_LIMIT) -> list[str]:
+                             limit: int = AUTHOR_SEARCH_LIMIT,
+                             date_from: str = None, date_to: str = None) -> list[str]:
         """
         Paper/Report 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 돌려준다.
 
@@ -1060,24 +1106,33 @@ recency_focus 판단 규칙 (매우 중요):
         if not doc_label or not keywords_str:
             return []
 
-        # ★ 쉼표로만 나눈다 (공백 분리 X) — "Lee Changsoo" 가 "Lee"/"Changsoo" 로
-        #   쪼개지면 "Lee"라는 흔한 성씨 하나만으로도 매칭돼 전혀 다른 사람의
-        #   문서까지 걸리는 문제가 있었다 (자세한 이유는 _text_retrieve_raw 주석 참고).
-        keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
+        keywords = _split_keywords(keywords_str)
         if not keywords:
             return []
+
+        # ★ date_from/date_to 필터: 이게 없으면 "2026년에 이창수가 쓴 보고서"처럼
+        #   기간이 지정된 질문에서도 저자 매칭만 되고 연도 제한이 전혀 적용되지 않아,
+        #   다른 연도의 문서까지 다 섞여 나오는 문제가 있었다.
+        date_filter = ""
+        params = {'keywords': keywords, 'limit': limit,
+                  'date_from': date_from, 'date_to': date_to}
+        if date_from:
+            date_filter += " AND m.date >= $date_from"
+        if date_to:
+            date_filter += " AND m.date <= $date_to"
 
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE m.author IS NOT NULL
               AND any(kw IN $keywords WHERE toLower(m.author) CONTAINS toLower(kw))
+              {date_filter}
             RETURN m.doc_id AS doc_id
             ORDER BY m.date DESC
             LIMIT $limit
         """
         try:
             with self.driver.session() as session:
-                rows = [dict(r) for r in session.run(query_str, keywords=keywords, limit=limit)]
+                rows = [dict(r) for r in session.run(query_str, **params)]
             return [r['doc_id'] for r in rows if r.get('doc_id')]
         except Exception as e:
             self._dbg(0, f"[Debug] 저자 검색 실패: {e}")
@@ -1311,9 +1366,9 @@ recency_focus 판단 규칙 (매우 중요):
         # ★ B/C 채널은 requested_mode(트리플용 폴백 이전 값) 기준으로 게이팅한다.
         #   그래야 OKR처럼 엔티티 벡터 인덱스가 없어 search_mode 가 'text'로
         #   폴백된 경우에도, 문서 자체의 벡터 검색(B)은 정상적으로 동작한다.
-        ids_b = set(self._doc_vector_retrieve(query_text, cfg)) if requested_mode in ('vector', 'hybrid') else set()   # B
-        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg)) if requested_mode in ('text', 'hybrid') else set()  # C
-        ids_d = set(self._doc_author_retrieve(keywords_str, cfg))       # D: 저자명 직접 검색 (모든 모드)
+        ids_b = set(self._doc_vector_retrieve(query_text, cfg, date_from=date_from, date_to=date_to)) if requested_mode in ('vector', 'hybrid') else set()   # B
+        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to)) if requested_mode in ('text', 'hybrid') else set()  # C
+        ids_d = set(self._doc_author_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to))  # D: 저자명 직접 검색 (모든 모드)
         ids_e = set(self._doc_week_retrieve(year_week, cfg))             # E: 주차 정확 매칭 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
         self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
