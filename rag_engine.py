@@ -481,14 +481,10 @@ class GraphRAG:
 target_datasets 판단 규칙 (매우 중요):
 - 질문 내용을 보고 위 "사용 가능한 데이터셋" 중 실제로 검색이 필요한 데이터셋만
   골라 배열로 넣으세요.
-- ★★ ReportsDB 와 Confluence 는 항상 함께 선택하세요 (매우 중요, 예외 없음).
-  둘 다 사내 내부 문서(보고서/주간보고)를 다루는 데이터셋이라 내용이 겹치므로,
-  ReportsDB 가 관련 있다고 판단되면 Confluence 도 반드시 함께 포함하고,
-  반대로 Confluence 가 관련 있다고 판단되면 ReportsDB 도 반드시 함께
-  포함하세요. 절대 둘 중 하나만 선택하지 마세요.
-  예: "SrTiO3는 어떤 방식으로 증착해?" 처럼 내부 실험/공정 관련 질문이라
-  ReportsDB 가 관련 있다고 판단되면 → target_datasets 에 ReportsDB 와
-  Confluence 를 함께 포함해야 함 (Confluence 만 빠뜨리면 안 됨).
+- ★ ReportsDB 와 Confluence 는 둘 다 사내 내부 문서를 다루지만 성격이 다릅니다
+  (아래 각 데이터셋 설명 참고). 질문이 특정 연구원 개인이 작성한 내용을
+  찾는 것이면 Confluence 위주로, 종합/정리된 연구보고서 내용을 찾는 것이면
+  ReportsDB 위주로 판단하되, 확신이 없으면 둘 다 포함하세요.
 - 논문/연구자/저널 관련 질문은 PapersDB를 포함하세요.
 - 여러 데이터셋에 걸칠 수 있는 질문이면 관련된 것을 모두 포함하세요.
 - ★ 확신이 없거나 질문이 모호하면, 좁히지 말고 관련 있을 수 있는 데이터셋을
@@ -612,15 +608,6 @@ recency_focus 판단 규칙 (매우 중요):
                 target_datasets = [ds for ds in target_raw if ds in valid_dataset_keys]
             if not target_datasets:
                 target_datasets = valid_dataset_keys
-
-            # ★ ReportsDB/Confluence 는 둘 다 사내 내부 문서를 다루므로 항상 함께 검색한다
-            #   (LLM 이 한쪽만 고르는 실수를 방지하는 코드 레벨 안전장치).
-            if REPORTS_DATASET in target_datasets and CONFLUENCE_DATASET not in target_datasets \
-                    and CONFLUENCE_DATASET in valid_dataset_keys:
-                target_datasets = target_datasets + [CONFLUENCE_DATASET]
-            if CONFLUENCE_DATASET in target_datasets and REPORTS_DATASET not in target_datasets \
-                    and REPORTS_DATASET in valid_dataset_keys:
-                target_datasets = target_datasets + [REPORTS_DATASET]
 
             return {
                 'keywords':        parsed.get('keywords', query),
