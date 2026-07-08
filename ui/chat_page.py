@@ -286,59 +286,53 @@ def build_chat_page():
             with ui.expansion('벡터 검색 튜닝', icon='tune').props('dense').classes('w-full').style(
                 'font-size:12px; color:#64748b;'
             ):
-                ui.label('엔티티 최소 유사도').style('font-size:11px; color:#94a3b8; margin-top:4px;')
-                entity_min_input = ui.number(
-                    value=rag.entity_score_min, min=0.0, max=1.0, step=0.01, format='%.2f'
-                ).props('dense outlined').style('width:100%;')
-                entity_min_input.on_value_change(
-                    lambda e: setattr(rag, 'entity_score_min', e.value)
-                )
+                with ui.element('div').style('display:flex; flex-direction:column; gap:6px; padding-top:2px;'):
+                    entity_min_input = ui.number(
+                        value=rag.entity_score_min, min=0.0, max=1.0, step=0.01, format='%.2f'
+                    ).props('dense outlined label="엔티티 최소 유사도"').style('width:100%;')
+                    entity_min_input.on_value_change(
+                        lambda e: setattr(rag, 'entity_score_min', e.value)
+                    )
 
-                ui.label('상대 컷오프 (1등 대비 격차)').style('font-size:11px; color:#94a3b8; margin-top:4px;')
-                gap_input = ui.number(
-                    value=rag.relative_gap, min=0.0, max=1.0, step=0.01, format='%.2f'
-                ).props('dense outlined').style('width:100%;')
-                gap_input.on_value_change(
-                    lambda e: setattr(rag, 'relative_gap', e.value)
-                )
+                    gap_input = ui.number(
+                        value=rag.relative_gap, min=0.0, max=1.0, step=0.01, format='%.2f'
+                    ).props('dense outlined label="상대 컷오프 (1등 대비 격차)"').style('width:100%;')
+                    gap_input.on_value_change(
+                        lambda e: setattr(rag, 'relative_gap', e.value)
+                    )
 
-                ui.label('문서 최소 유사도').style('font-size:11px; color:#94a3b8; margin-top:4px;')
-                doc_min_input = ui.number(
-                    value=rag.doc_score_min, min=0.0, max=1.0, step=0.01, format='%.2f'
-                ).props('dense outlined').style('width:100%;')
-                doc_min_input.on_value_change(
-                    lambda e: setattr(rag, 'doc_score_min', e.value)
-                )
+                    doc_min_input = ui.number(
+                        value=rag.doc_score_min, min=0.0, max=1.0, step=0.01, format='%.2f'
+                    ).props('dense outlined label="문서 최소 유사도"').style('width:100%;')
+                    doc_min_input.on_value_change(
+                        lambda e: setattr(rag, 'doc_score_min', e.value)
+                    )
 
-                ui.separator().style('border-color:#e2e8f0; margin:8px 0;')
+                    ui.separator().style('border-color:#e2e8f0; margin:2px 0;')
 
-                # ★ 터미널 디버그 출력량 조절. rag.debug_level 도 인스턴스 속성이라
-                #   즉시 반영된다 (서버 재시작 불필요).
-                ui.label('디버그 출력량').style('font-size:11px; color:#94a3b8; margin-top:4px;')
-                debug_level_select = ui.select(
-                    {0: '0 - 에러만', 1: '1 - 요약 (기본)', 2: '2 - 보통', 3: '3 - 상세(전체)'},
-                    value=rag.debug_level,
-                ).props('dense outlined').style('width:100%;')
-                debug_level_select.on_value_change(
-                    lambda e: setattr(rag, 'debug_level', e.value)
-                )
+                    # ★ 터미널 디버그 출력량 조절. rag.debug_level 도 인스턴스 속성이라
+                    #   즉시 반영된다 (서버 재시작 불필요).
+                    debug_level_select = ui.select(
+                        {0: '0 - 에러만', 1: '1 - 요약 (기본)', 2: '2 - 보통', 3: '3 - 상세(전체)'},
+                        value=rag.debug_level,
+                    ).props('dense outlined label="디버그 출력량"').style('width:100%;')
+                    debug_level_select.on_value_change(
+                        lambda e: setattr(rag, 'debug_level', e.value)
+                    )
 
-                ui.separator().style('border-color:#e2e8f0; margin:8px 0;')
-
-                # ★ 답변 생성용 LLM 모델 선택. rag.answer_llm 은 인스턴스 속성이라
-                #   다음 질문부터 즉시 반영된다 (서버 재시작 불필요).
-                ui.label('답변 생성 모델').style('font-size:11px; color:#94a3b8; margin-top:4px;')
-                llm_select = ui.select(
-                    {
-                        None:         'gpt-prod (GPT-OSS 120B, 기본)',
-                        'GaussO4.1':  'GaussO4.1',
-                        'Gemma4':     'Gemma4 (경량/빠름)',
-                    },
-                    value=rag.answer_llm,
-                ).props('dense outlined').style('width:100%;')
-                llm_select.on_value_change(
-                    lambda e: setattr(rag, 'answer_llm', e.value)
-                )
+                    # ★ 답변 생성용 LLM 모델 선택. rag.answer_llm 은 인스턴스 속성이라
+                    #   다음 질문부터 즉시 반영된다 (서버 재시작 불필요).
+                    llm_select = ui.select(
+                        {
+                            None:         'gpt-prod (GPT-OSS 120B, 기본)',
+                            'GaussO4.1':  'GaussO4.1',
+                            'Gemma4':     'Gemma4 (경량/빠름)',
+                        },
+                        value=rag.answer_llm,
+                    ).props('dense outlined label="답변 생성 모델"').style('width:100%;')
+                    llm_select.on_value_change(
+                        lambda e: setattr(rag, 'answer_llm', e.value)
+                    )
 
             ui.separator().style('border-color:#e2e8f0;')
 
