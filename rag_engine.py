@@ -467,6 +467,7 @@ class GraphRAG:
 출력 형식 (JSON):
 {{
   "keywords": "키워드1, 키워드2, ...",
+  "author_names": "저자명1, 저자명2, ... (질문이 특정 인물이 작성한 문서를 찾는 게 아니면 빈 문자열)",
   "target_datasets": ["관련된 데이터셋명", ...],
   "date_from": "YYYY-MM-DD 또는 null",
   "date_to": "YYYY-MM-DD 또는 null",
@@ -475,6 +476,14 @@ class GraphRAG:
   "year_week_from": "YYYY-WNN 또는 null",
   "year_week_to": "YYYY-WNN 또는 null"
 }}
+
+author_names 판단 규칙 (매우 중요):
+- 질문이 "그 사람이 쓴 논문/보고서", "이창수가 작성한 문서", "Tao Li 최근 논문" 처럼
+  "특정 인물이 작성한 문서를 찾는" 의도일 때만 그 사람 이름을 채우세요.
+- ★ 그 외의 모든 질문(기술/소재/방법을 묻는 일반 질문 등)은 author_names 를 반드시
+  빈 문자열("")로 두세요. 절대로 일반 기술 용어(예: "MIM", "capacitor", "TiO2")를
+  author_names 에 넣지 마세요 — author 필드는 부분 문자열(CONTAINS) 매칭이라, 관련
+  없는 용어가 저자명에 우연히 포함되면 전혀 관련 없는 문서가 대량으로 섞여 들어갑니다.
 
 날짜 변환 규칙:
 - "N년 이후", "N년 이상", "N년부터" → date_from: "N-01-01", date_to: null
@@ -642,8 +651,11 @@ recency_focus 판단 규칙 (매우 중요):
                 year_week_from = year_week
                 year_week_to   = year_week
 
+            author_names = (parsed.get('author_names') or '').strip()
+
             return {
                 'keywords':        parsed.get('keywords', query),
+                'author_names':    author_names,
                 'date_from':       date_from,
                 'date_to':         date_to,
                 'recency_focus':   bool(parsed.get('recency_focus', False)),
@@ -654,7 +666,7 @@ recency_focus 판단 규칙 (매우 중요):
             }
         except Exception as e:
             self._dbg(0, f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
-            return {'keywords': query, 'date_from': None, 'date_to': None,
+            return {'keywords': query, 'author_names': '', 'date_from': None, 'date_to': None,
                     'recency_focus': False, 'year_week': None,
                     'year_week_from': None, 'year_week_to': None,
                     'target_datasets': list(DATASETS.keys())}
@@ -1403,7 +1415,8 @@ recency_focus 판단 규칙 (매우 중요):
                  recency_focus: bool = False,
                  year_week: str = None,
                  year_week_from: str = None,
-                 year_week_to: str = None) -> str:
+                 year_week_to: str = None,
+                 author_names: str = None) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -1510,7 +1523,11 @@ recency_focus 판단 규칙 (매우 중요):
         #   폴백된 경우에도, 문서 자체의 벡터 검색(B)은 정상적으로 동작한다.
         ids_b = set(self._doc_vector_retrieve(query_text, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if requested_mode in ('vector', 'hybrid') else set()   # B
         ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if requested_mode in ('text', 'hybrid') else set()  # C
-        ids_d = set(self._doc_author_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to))  # D: 저자명 직접 검색 (모든 모드)
+        # ★ D(저자) 채널은 author_names 가 명시적으로 있을 때만 실행한다. 예전엔
+        #   일반 keywords_str 전체로 author 필드를 CONTAINS 검색했는데, "MIM",
+        #   "capacitor" 같은 일반 기술 용어가 저자명에 우연히 부분 일치해 관련 없는
+        #   문서가 대량으로 섞여 들어가는 문제(컨텍스트 폭주 → 응답 지연)가 있었다.
+        ids_d = set(self._doc_author_retrieve(author_names, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if author_names else set()  # D: 저자명 직접 검색 (모든 모드)
         ids_e = set(self._doc_week_retrieve(year_week, cfg, yw_from=year_week_from, yw_to=year_week_to))  # E: 주차 정확/범위 매칭 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
         self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
@@ -1555,6 +1572,7 @@ recency_focus 판단 규칙 (매우 중요):
 
         extracted          = self._extract_keywords(query)
         extracted_keywords = extracted['keywords']
+        author_names       = extracted['author_names']
         date_from          = extracted['date_from']
         date_to            = extracted['date_to']
         recency_focus      = extracted['recency_focus']
@@ -1564,6 +1582,7 @@ recency_focus 판단 규칙 (매우 중요):
         target_datasets    = extracted['target_datasets']
 
         self._dbg(1, f"[Debug] 추출된 키워드: {extracted_keywords}")
+        self._dbg(1, f"[Debug] 저자명(D채널 전용): {author_names or '(없음)'}")
         week_disp = (f"{year_week_from}~{year_week_to}"
                      if (year_week_from or year_week_to) else year_week)
         self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
@@ -1591,7 +1610,7 @@ recency_focus 판단 규칙 (매우 중요):
                     self.retrieve,
                     extracted_keywords, query, ds, mode,
                     DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
-                    year_week_from, year_week_to
+                    year_week_from, year_week_to, author_names
                 )
                 for ds in search_targets
             }
