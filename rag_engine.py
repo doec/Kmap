@@ -581,23 +581,32 @@ recency_focus 판단 규칙 (매우 중요):
                     except Exception as e:
                         self._dbg(0, f"[Debug] 주차→날짜 범위 계산 실패: {e}")
 
-            # ★ 주차 "범위"(year_week_from~year_week_to)가 감지됐는데 date_from/date_to 가
-            #   비어 있으면, 시작 주차의 월요일 ~ 끝 주차의 일요일로 날짜 범위를 계산한다.
-            if not date_from and not date_to:
-                wf_raw = parsed.get('year_week_from')
-                wt_raw = parsed.get('year_week_to')
-                wf_m = re.match(r'^(\d{4})-W(\d{1,2})$', str(wf_raw).strip(), re.IGNORECASE) if wf_raw else None
-                wt_m = re.match(r'^(\d{4})-W(\d{1,2})$', str(wt_raw).strip(), re.IGNORECASE) if wt_raw else None
-                if wf_m or wt_m:
-                    try:
-                        if wf_m:
-                            y, w = int(wf_m.group(1)), int(wf_m.group(2))
-                            date_from = date.fromisocalendar(y, w, 1).isoformat()  # 월요일
-                        if wt_m:
-                            y, w = int(wt_m.group(1)), int(wt_m.group(2))
-                            date_to = date.fromisocalendar(y, w, 7).isoformat()  # 일요일
-                    except Exception as e:
-                        self._dbg(0, f"[Debug] 주차 범위→날짜 범위 계산 실패: {e}")
+            # ★ 주차 "범위"(year_week_from~year_week_to) 정규화 ("YYYY-WNN", 2자리 0-패딩).
+            #   이 값은 내부 문서(date_as_week) 검색 시 year_week 문자열 범위로 직접
+            #   필터링하는 데 쓴다 — Confl_doc 등은 정확한 date 속성이 없어 date 범위로
+            #   거르면 매칭이 0이 되기 때문(주차로만 관리됨).
+            def _norm_yw(v):
+                if not v:
+                    return None
+                mm = re.match(r'^(\d{4})-W(\d{1,2})$', str(v).strip(), re.IGNORECASE)
+                return f"{mm.group(1)}-W{int(mm.group(2)):02d}" if mm else None
+
+            year_week_from = _norm_yw(parsed.get('year_week_from'))
+            year_week_to   = _norm_yw(parsed.get('year_week_to'))
+
+            # 주차 범위가 감지됐는데 date_from/date_to 가 비어 있으면, 시작 주차의
+            # 월요일 ~ 끝 주차의 일요일로 날짜 범위도 함께 계산한다 (date 로 관리되는
+            # 데이터셋/채널 및 정렬 로직이 이 범위를 따르도록).
+            if not date_from and not date_to and (year_week_from or year_week_to):
+                try:
+                    if year_week_from:
+                        wm = re.match(r'^(\d{4})-W(\d{1,2})$', year_week_from)
+                        date_from = date.fromisocalendar(int(wm.group(1)), int(wm.group(2)), 1).isoformat()
+                    if year_week_to:
+                        wm = re.match(r'^(\d{4})-W(\d{1,2})$', year_week_to)
+                        date_to = date.fromisocalendar(int(wm.group(1)), int(wm.group(2)), 7).isoformat()
+                except Exception as e:
+                    self._dbg(0, f"[Debug] 주차 범위→날짜 범위 계산 실패: {e}")
 
             # ★ target_datasets 검증: 유효한 데이터셋명만 남기고, 결과가 비었거나
             #   파싱이 이상하면 안전하게 "전체 데이터셋"으로 폴백한다 — 잘못 좁혀서
@@ -609,18 +618,27 @@ recency_focus 판단 규칙 (매우 중요):
             if not target_datasets:
                 target_datasets = valid_dataset_keys
 
+            # 단일 주차(year_week)만 있고 범위가 없으면, 문서 채널(B/C/D)의 주차 필터가
+            # 그 한 주차로 좁혀지도록 범위 양끝을 같은 값으로 채운다.
+            if year_week and not year_week_from and not year_week_to:
+                year_week_from = year_week
+                year_week_to   = year_week
+
             return {
                 'keywords':        parsed.get('keywords', query),
                 'date_from':       date_from,
                 'date_to':         date_to,
                 'recency_focus':   bool(parsed.get('recency_focus', False)),
                 'year_week':       year_week,
+                'year_week_from':  year_week_from,
+                'year_week_to':    year_week_to,
                 'target_datasets': target_datasets,
             }
         except Exception as e:
             self._dbg(0, f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
             return {'keywords': query, 'date_from': None, 'date_to': None,
                     'recency_focus': False, 'year_week': None,
+                    'year_week_from': None, 'year_week_to': None,
                     'target_datasets': list(DATASETS.keys())}
 
     def _build_return_clause(self, return_fields: list) -> str:
@@ -983,10 +1001,46 @@ recency_focus 판단 규칙 (매우 중요):
               f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(results), limit)}개")
         return results[:limit]
 
+    # ── 공통: 메타 노드 날짜/주차 범위 필터 ──────────────────────────────────────
+    def _meta_date_filter(self, cfg: dict, alias: str,
+                          date_from: str = None, date_to: str = None,
+                          yw_from: str = None, yw_to: str = None) -> tuple[str, dict]:
+        """
+        문서 메타 노드(alias)에 걸 날짜/주차 범위 필터절과 파라미터를 만든다.
+
+        ★ ReportsDB/Confluence 같은 date_as_week 데이터셋은 정확한 date 속성이
+          없거나(주차로만 관리) 신뢰할 수 없어서, date 범위로 거르면 매칭이 0이 되는
+          문제가 있었다. 이 경우 year_week 문자열 범위("2026-W10"~"2026-W15")로
+          거른다. "YYYY-WNN"(주차 2자리 0-패딩) 포맷은 사전식 비교가 연대순과
+          일치하므로 문자열 부등호 비교로 안전하게 범위 필터가 된다. DB에는 소문자
+          'w'(예: "2026-w10")로 저장돼 있어 toLower() 로 양쪽을 맞춘다.
+
+        그 외(PapersDB 등) 데이터셋은 기존대로 date 범위로 거른다.
+        """
+        parts: list[str] = []
+        params: dict = {}
+        if cfg.get('date_as_week') and (yw_from or yw_to):
+            if yw_from:
+                parts.append(f"toLower({alias}.year_week) >= toLower($yw_from)")
+                params['yw_from'] = yw_from
+            if yw_to:
+                parts.append(f"toLower({alias}.year_week) <= toLower($yw_to)")
+                params['yw_to'] = yw_to
+        else:
+            if date_from:
+                parts.append(f"{alias}.date >= $date_from")
+                params['date_from'] = date_from
+            if date_to:
+                parts.append(f"{alias}.date <= $date_to")
+                params['date_to'] = date_to
+        clause = "".join(f" AND {p}" for p in parts)
+        return clause, params
+
     # ── B 기능: 문서 단위 벡터 검색 ────────────────────────────────────────────
     def _doc_vector_retrieve(self, query_text: str, cfg: dict,
                              limit: int = DOC_SEARCH_LIMIT,
-                             date_from: str = None, date_to: str = None) -> list[str]:
+                             date_from: str = None, date_to: str = None,
+                             yw_from: str = None, yw_to: str = None) -> list[str]:
         """
         Paper/Report 메타 노드를 대상으로 벡터 검색을 수행해 관련 문서의
         doc_id 목록을 돌려준다.
@@ -1003,14 +1057,12 @@ recency_focus 판단 규칙 (매우 중요):
             return []
 
         q_emb = get_embedding(query_text)
-        # ★ date_from/date_to 필터: 없으면 "2026년 관련 보고서" 처럼 기간이 지정된
+        # ★ 기간(date/주차) 필터: 없으면 "2026년 관련 보고서" 처럼 기간이 지정된
         #   질문에서도 벡터 유사도만 보고 연도 제한이 전혀 안 걸려 다른 연도 문서까지
-        #   섞여 나오는 문제가 있었다.
-        date_filter = ""
-        if date_from:
-            date_filter += " AND node.date >= $date_from"
-        if date_to:
-            date_filter += " AND node.date <= $date_to"
+        #   섞여 나오는 문제가 있었다. date_as_week 데이터셋은 year_week 범위로 거른다.
+        date_filter, date_params = self._meta_date_filter(
+            cfg, 'node', date_from, date_to, yw_from, yw_to
+        )
 
         query_str = f"""
             CALL db.index.vector.queryNodes($index, $limit, $q_emb)
@@ -1024,8 +1076,7 @@ recency_focus 판단 규칙 (매우 중요):
             'limit':     limit,
             'q_emb':     q_emb,
             'score_min': self.doc_score_min,
-            'date_from': date_from,
-            'date_to':   date_to,
+            **date_params,
         }
         try:
             with self.driver.session() as session:
@@ -1050,7 +1101,8 @@ recency_focus 판단 규칙 (매우 중요):
     # ── C 기능: 문서 본문 키워드(FULLTEXT) 검색 ─────────────────────────────────
     def _doc_fulltext_retrieve(self, keywords_str: str, cfg: dict,
                                limit: int = DOC_SEARCH_LIMIT,
-                               date_from: str = None, date_to: str = None) -> list[str]:
+                               date_from: str = None, date_to: str = None,
+                               yw_from: str = None, yw_to: str = None) -> list[str]:
         """
         doc_fulltext_index 로 지정된 FULLTEXT 인덱스에서 문서 본문 키워드를 검색해
         관련 문서의 doc_id 목록을 돌려준다.
@@ -1083,12 +1135,10 @@ recency_focus 판단 규칙 (매우 중요):
 
         lucene_query = " ".join(f'"{_escape(kw)}"' for kw in keywords)
 
-        # ★ date_from/date_to 필터 (다른 문서 채널과 동일한 이유)
-        date_filter = ""
-        if date_from:
-            date_filter += " AND node.date >= $date_from"
-        if date_to:
-            date_filter += " AND node.date <= $date_to"
+        # ★ 기간(date/주차) 필터 (다른 문서 채널과 동일한 이유)
+        date_filter, date_params = self._meta_date_filter(
+            cfg, 'node', date_from, date_to, yw_from, yw_to
+        )
 
         query_str = f"""
             CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
@@ -1100,7 +1150,7 @@ recency_focus 판단 규칙 (매우 중요):
         doc_ids: list[str] = []
         for ft_index in ft_indexes:
             params = {'index': ft_index, 'q': lucene_query, 'limit': limit,
-                      'date_from': date_from, 'date_to': date_to}
+                      **date_params}
             try:
                 with self.driver.session() as session:
                     rows = [dict(r) for r in session.run(query_str, **params)]
@@ -1112,7 +1162,8 @@ recency_focus 판단 규칙 (매우 중요):
     # ── D 기능: 저자명으로 문서 직접 검색 ────────────────────────────────────────
     def _doc_author_retrieve(self, keywords_str: str, cfg: dict,
                              limit: int = AUTHOR_SEARCH_LIMIT,
-                             date_from: str = None, date_to: str = None) -> list[str]:
+                             date_from: str = None, date_to: str = None,
+                             yw_from: str = None, yw_to: str = None) -> list[str]:
         """
         Paper/Report 메타 노드의 author 속성을 키워드로 직접 검색해 doc_id 를 돌려준다.
 
@@ -1135,16 +1186,13 @@ recency_focus 판단 규칙 (매우 중요):
         if not keywords:
             return []
 
-        # ★ date_from/date_to 필터: 이게 없으면 "2026년에 이창수가 쓴 보고서"처럼
+        # ★ 기간(date/주차) 필터: 이게 없으면 "2026년에 이창수가 쓴 보고서"처럼
         #   기간이 지정된 질문에서도 저자 매칭만 되고 연도 제한이 전혀 적용되지 않아,
         #   다른 연도의 문서까지 다 섞여 나오는 문제가 있었다.
-        date_filter = ""
-        params = {'keywords': keywords, 'limit': limit,
-                  'date_from': date_from, 'date_to': date_to}
-        if date_from:
-            date_filter += " AND m.date >= $date_from"
-        if date_to:
-            date_filter += " AND m.date <= $date_to"
+        date_filter, date_params = self._meta_date_filter(
+            cfg, 'm', date_from, date_to, yw_from, yw_to
+        )
+        params = {'keywords': keywords, 'limit': limit, **date_params}
 
         query_str = f"""
             MATCH (m:{doc_label})
@@ -1286,7 +1334,9 @@ recency_focus 판단 규칙 (매우 중요):
                  date_from: str = None,
                  date_to: str = None,
                  recency_focus: bool = False,
-                 year_week: str = None) -> str:
+                 year_week: str = None,
+                 year_week_from: str = None,
+                 year_week_to: str = None) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -1391,9 +1441,9 @@ recency_focus 판단 규칙 (매우 중요):
         # ★ B/C 채널은 requested_mode(트리플용 폴백 이전 값) 기준으로 게이팅한다.
         #   그래야 OKR처럼 엔티티 벡터 인덱스가 없어 search_mode 가 'text'로
         #   폴백된 경우에도, 문서 자체의 벡터 검색(B)은 정상적으로 동작한다.
-        ids_b = set(self._doc_vector_retrieve(query_text, cfg, date_from=date_from, date_to=date_to)) if requested_mode in ('vector', 'hybrid') else set()   # B
-        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to)) if requested_mode in ('text', 'hybrid') else set()  # C
-        ids_d = set(self._doc_author_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to))  # D: 저자명 직접 검색 (모든 모드)
+        ids_b = set(self._doc_vector_retrieve(query_text, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if requested_mode in ('vector', 'hybrid') else set()   # B
+        ids_c = set(self._doc_fulltext_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if requested_mode in ('text', 'hybrid') else set()  # C
+        ids_d = set(self._doc_author_retrieve(keywords_str, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to))  # D: 저자명 직접 검색 (모든 모드)
         ids_e = set(self._doc_week_retrieve(year_week, cfg))             # E: 주차 정확 매칭 (모든 모드)
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
         self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
@@ -1442,11 +1492,15 @@ recency_focus 판단 규칙 (매우 중요):
         date_to            = extracted['date_to']
         recency_focus      = extracted['recency_focus']
         year_week          = extracted['year_week']
+        year_week_from     = extracted['year_week_from']
+        year_week_to       = extracted['year_week_to']
         target_datasets    = extracted['target_datasets']
 
         self._dbg(1, f"[Debug] 추출된 키워드: {extracted_keywords}")
+        week_disp = (f"{year_week_from}~{year_week_to}"
+                     if (year_week_from or year_week_to) else year_week)
         self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
-              f"주차: {year_week} | 선택된 데이터셋: {target_datasets}")
+              f"주차: {week_disp} | 선택된 데이터셋: {target_datasets}")
 
         if dataset and dataset != 'All' and dataset in DATASETS:
             # 사용자가 특정 탭을 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
@@ -1469,7 +1523,8 @@ recency_focus 판단 규칙 (매우 중요):
                 ds: executor.submit(
                     self.retrieve,
                     extracted_keywords, query, ds, mode,
-                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week
+                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
+                    year_week_from, year_week_to
                 )
                 for ds in search_targets
             }
