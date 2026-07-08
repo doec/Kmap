@@ -139,7 +139,7 @@ def build_chat_page():
     _page_client = _ctx.client
 
     # ── global styles ─────────────────────────────────────────────────────────────────────────────────
-    ui.add_head_html('''
+    ui.add_head_html(r'''
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
