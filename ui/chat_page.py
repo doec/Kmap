@@ -512,10 +512,7 @@ def build_chat_page():
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
-                        # ★ Gemma4 등 일부 모델이 LaTeX 수식($...$, \text{} 등)을 그대로
-                        #   출력하는 경우가 있어, 'latex' extra 로 MathJax 렌더링을 켜서
-                        #   수식이 깨진 텍스트가 아니라 실제 수식으로 보이게 한다.
-                        ui.markdown(_linkify(content), extras=['fenced-code-blocks', 'tables', 'latex'])
+                        ui.markdown(_linkify(content))
                         if graph_id:
                             _add_subgraph_widget(graph_id, _page_client)
 
