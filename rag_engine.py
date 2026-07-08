@@ -623,6 +623,14 @@ recency_focus 판단 규칙 (매우 중요):
             if not target_datasets:
                 target_datasets = valid_dataset_keys
 
+            # ★ ReportsDB(종합 보고서)를 검색하면 Confluence(연구원 개별 보고서)도
+            #   항상 함께 검색한다 — 두 데이터셋은 사내 내부 보고 문서로 내용이
+            #   겹치므로, ReportsDB 만 검색하면 개별 연구원 보고 내용을 놓친다.
+            #   (단방향: Confluence 만 선택된 경우는 그대로 둔다.)
+            if REPORTS_DATASET in target_datasets and CONFLUENCE_DATASET not in target_datasets \
+                    and CONFLUENCE_DATASET in valid_dataset_keys:
+                target_datasets = target_datasets + [CONFLUENCE_DATASET]
+
             # 단일 주차(year_week)만 있고 범위가 없으면, 문서 채널(B/C/D)의 주차 필터가
             # 그 한 주차로 좁혀지도록 범위 양끝을 같은 값으로 채운다.
             if year_week and not year_week_from and not year_week_to:
