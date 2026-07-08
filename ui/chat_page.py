@@ -163,6 +163,9 @@ def build_chat_page():
         /* hover animations */
         .hover-btn { transition: all 0.2s ease; }
         .hover-btn:hover { transform: scale(1.05); filter: brightness(1.1); }
+
+        /* sidebar resize handle */
+        #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
     </style>
     <script>
         // 답변(.ai-bubble) 안의 링크 클릭 시 새 탭에서 열기 (이벤트 위임 — 동적 콘텐츠에도 적용)
@@ -173,6 +176,51 @@ def build_chat_page():
                 window.open(a.href, '_blank', 'noopener,noreferrer');
             }
         });
+
+        // ★ 사이드바 폭 마우스 드래그 리사이즈.
+        //   폴링 없이 리사이저 엘리먼트가 DOM에 나타날 때까지 짧게 재시도만 하고,
+        //   이후 로직은 전부 순수 클라이언트 이벤트라 타이밍 경쟁 문제가 없다.
+        //   localStorage 에 폭을 저장해 새로고침 후에도 유지한다.
+        (function () {
+            function initSidebarResize() {
+                var sidebar  = document.getElementById('kmap-sidebar');
+                var resizer  = document.getElementById('kmap-sidebar-resizer');
+                if (!sidebar || !resizer) {
+                    setTimeout(initSidebarResize, 200);
+                    return;
+                }
+                if (resizer.dataset.kmapBound) return;   // 중복 바인딩 방지
+                resizer.dataset.kmapBound = '1';
+
+                var saved = localStorage.getItem('kmap-sidebar-width');
+                if (saved) sidebar.style.width = saved + 'px';
+
+                var dragging = false;
+                resizer.addEventListener('mousedown', function (e) {
+                    dragging = true;
+                    resizer.classList.add('resizing');
+                    document.body.style.userSelect = 'none';
+                    document.body.style.cursor = 'col-resize';
+                    e.preventDefault();
+                });
+                document.addEventListener('mousemove', function (e) {
+                    if (!dragging) return;
+                    var rect = sidebar.getBoundingClientRect();
+                    var w = e.clientX - rect.left;
+                    w = Math.max(160, Math.min(480, w));
+                    sidebar.style.width = w + 'px';
+                });
+                document.addEventListener('mouseup', function () {
+                    if (!dragging) return;
+                    dragging = false;
+                    resizer.classList.remove('resizing');
+                    document.body.style.userSelect = '';
+                    document.body.style.cursor = '';
+                    localStorage.setItem('kmap-sidebar-width', parseInt(sidebar.style.width, 10));
+                });
+            }
+            initSidebarResize();
+        })();
     </script>
     ''')
 
@@ -231,9 +279,12 @@ def build_chat_page():
         'display:flex; flex-direction:row; width:100%; height:calc(100vh - 52px); overflow:hidden;'
     ):
         # ── sidebar ─────────────────────────────────────────────────────────────────────────────────────
-        with ui.element('div').style(
-            'width:220px; min-width:220px; flex-shrink:0; background:#f1f5f9; '
-            'border-right:1px solid #e2e8f0; padding:12px; display:flex; flex-direction:column; gap:12px; overflow-y:auto;'
+        # ★ 폭을 마우스 드래그로 조절할 수 있도록 id 를 부여하고, 오른쪽에 리사이즈
+        #   핸들(얇은 세로 바)을 둔다. 실제 드래그 로직은 아래 ui.run_javascript 로
+        #   한 번만 주입한다 (min 160px ~ max 480px, localStorage 에 폭 저장).
+        with ui.element('div').props('id=kmap-sidebar').style(
+            'width:225px; min-width:160px; max-width:480px; flex-shrink:0; background:#f1f5f9; '
+            'border-right:1px solid #e2e8f0; padding:12px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; overflow-x:hidden;'
         ):
             with ui.element('div').style('display:flex; align-items:center; justify-content:space-between;'):
                 ui.label('대화 기록').style(
@@ -335,6 +386,12 @@ def build_chat_page():
                     )
 
             ui.separator().style('border-color:#e2e8f0;')
+
+        # ── sidebar resize handle ──────────────────────────────────────────────────────────────────────
+        ui.element('div').props('id=kmap-sidebar-resizer').style(
+            'width:5px; flex-shrink:0; cursor:col-resize; background:transparent; '
+            'transition:background 0.15s;'
+        )
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
         with ui.element('div').style(
