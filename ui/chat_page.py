@@ -323,6 +323,23 @@ def build_chat_page():
                     lambda e: setattr(rag, 'debug_level', e.value)
                 )
 
+                ui.separator().style('border-color:#e2e8f0; margin:8px 0;')
+
+                # ★ 답변 생성용 LLM 모델 선택. rag.answer_llm 은 인스턴스 속성이라
+                #   다음 질문부터 즉시 반영된다 (서버 재시작 불필요).
+                ui.label('답변 생성 모델').style('font-size:11px; color:#94a3b8; margin-top:4px;')
+                llm_select = ui.select(
+                    {
+                        None:         'gpt-prod (GPT-OSS 120B, 기본)',
+                        'GaussO4.1':  'GaussO4.1',
+                        'Gemma4':     'Gemma4 (경량/빠름)',
+                    },
+                    value=rag.answer_llm,
+                ).props('dense outlined').style('width:100%;')
+                llm_select.on_value_change(
+                    lambda e: setattr(rag, 'answer_llm', e.value)
+                )
+
             ui.separator().style('border-color:#e2e8f0;')
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────

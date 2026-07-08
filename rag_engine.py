@@ -391,6 +391,11 @@ class GraphRAG:
         #   3 = 상세 (개별 결과 점수 나열, 전체 컨텍스트/LLM 프롬프트 원문까지 전부)
         self.debug_level = DEFAULT_DEBUG_LEVEL
 
+        # ★ 최종 답변 생성에 쓸 LLM 모델 — 세션별로 UI에서 선택 가능
+        #   (llm_util._LLM_CONFIGS 에 등록된 이름과 일치해야 함).
+        #   None 이면 llm_util 의 .env 기본값(LLM)을 그대로 사용한다.
+        self.answer_llm = None
+
     def _dbg(self, level: int, *args, **kwargs):
         """level <= self.debug_level 일 때만 출력. 에러(level=0)는 항상 출력된다."""
         if self.debug_level >= level:
@@ -1753,7 +1758,8 @@ recency_focus 판단 규칙 (매우 중요):
         for chunk in ask_llm_stream_iter_messages(
             messages=messages,
             temperature=0.05,
-            reasoning_effort="medium"
+            reasoning_effort="medium",
+            llm=self.answer_llm,
         ):
             full_result.append(chunk)
             yield {'type': 'content', 'text': chunk}
