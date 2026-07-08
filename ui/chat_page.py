@@ -127,6 +127,20 @@ def build_chat_page():
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <script>
+        // ★ MathJax v3 설정은 반드시 로더 스크립트보다 "먼저" 정의돼야 한다.
+        //   - inlineMath 에 $...$ 도 추가 (기본은 \\(...\\) 만 인식)
+        //   - code/pre/textarea 안의 $ 는 건드리지 않도록 skip
+        //   - 사내망에서 CDN 이 막히면 수식은 그냥 원문 텍스트로 보이며 앱은 정상 동작
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']]
+            },
+            options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+        };
+    </script>
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         *, *::before, *::after { font-family: "Inter", sans-serif; box-sizing: border-box; }
         body, html { margin: 0; padding: 0; overflow: hidden; background: #f8fafc; }
@@ -168,6 +182,13 @@ def build_chat_page():
         #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
     </style>
     <script>
+        // 답변이 렌더링/갱신된 뒤 호출하면 새로 들어온 수식을 다시 typeset 한다.
+        window.kmapTypeset = function () {
+            if (window.MathJax && window.MathJax.typesetPromise) {
+                window.MathJax.typesetPromise().catch(function () {});
+            }
+        };
+
         // 답변(.ai-bubble) 안의 링크 클릭 시 새 탭에서 열기 (이벤트 위임 — 동적 콘텐츠에도 적용)
         document.addEventListener('click', function (e) {
             var a = e.target.closest && e.target.closest('.ai-bubble a');
@@ -488,6 +509,11 @@ def build_chat_page():
                     _render_message(msg)
             scroll_area.scroll_to(percent=1.0)
             _refresh_conv_list()
+            # 불러온 대화의 수식도 다시 typeset
+            try:
+                _page_client.run_javascript('window.kmapTypeset && window.kmapTypeset()')
+            except Exception:
+                pass
 
         # ── helper: render a saved message ─────────────────────────────────────────────────────────────
         def _render_message(msg: dict):
@@ -648,6 +674,12 @@ def build_chat_page():
                     md_element = ui.markdown('(응답을 받지 못했습니다)')
             else:
                 md_element.set_content(_linkify(full_text))
+
+            # 답변이 최종 확정된 뒤 수식(LaTeX)을 typeset (스트리밍 중엔 하지 않아 깜빡임 방지)
+            try:
+                await _page_client.run_javascript('window.kmapTypeset && window.kmapTypeset()')
+            except Exception:
+                pass
 
             # ── subgraph toggle ───────────────────────────────────────────────────────────────────────────────────
             graph_id = None
