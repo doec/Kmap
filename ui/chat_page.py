@@ -36,10 +36,29 @@ _DOI_RE = re.compile(
 _MATH_DISPLAY_RE = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
 _MATH_INLINE_RE  = re.compile(r'\$(?!\s)([^\$\n]+?)(?<!\s)\$')
 
+# ★ 모델에 따라 $...$ 구분자 없이 LaTeX 명령어(\text{Al}_2\text{O}_3 등)를 맨 텍스트로
+#   내놓는 경우가 있다(Gemma4에서 관찰됨). 구분자가 없으면 MathJax 가 인식을 못 해
+#   그대로 노출되므로, "백슬래시 명령어가 공백 없이 연속으로 이어지는" 구간을 찾아
+#   자동으로 \(...\) 로 감싼다 — 모델이 구분자를 쓰든 안 쓰든 결과를 통일한다.
+#   토큰 하나 = \명령어 + 선택적 {...} + 선택적 아래/위첨자(_x, _{...}, ^x, ^{...}).
+_LATEX_TOKEN = r'\\[a-zA-Z]+(?:\{[^{}]*\})?(?:[_^](?:\{[^{}]*\}|[^\s{}\\]))?'
+_BARE_LATEX_RE = re.compile(r'(?:' + _LATEX_TOKEN + r'){1,}')
+# 이미 \(...\) / \[...\] 로 감싸진 구간은 건드리지 않도록 분리해서 처리한다.
+_ALREADY_DELIM_RE = re.compile(r'(\\\(.*?\\\)|\\\[.*?\\\])', re.DOTALL)
+
+
+def _wrap_bare_latex(text: str) -> str:
+    parts = _ALREADY_DELIM_RE.split(text)
+    for i, part in enumerate(parts):
+        if i % 2 == 0:   # 홀수 인덱스는 이미 감싸진 구간(그대로 유지)
+            parts[i] = _BARE_LATEX_RE.sub(lambda m: f'\\({m.group(0)}\\)', part)
+    return ''.join(parts)
+
 
 def _convert_math_delims(text: str) -> str:
     text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
     text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
+    text = _wrap_bare_latex(text)
     return text
 
 
