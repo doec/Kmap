@@ -196,7 +196,9 @@ def build_chat_page():
             options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
         };
     </script>
-    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <!-- ★ 외부 CDN 대신 로컬로 서빙 (main.py 의 app.add_static_files('/mathjax', ...) 참고).
+         사내망이 외부 CDN 을 막거나 지연시켜 수식이 렌더링 안 되는 문제를 근본적으로 없앤다. -->
+    <script async src="/mathjax/tex-mml-chtml.js"></script>
     <style>
         *, *::before, *::after { font-family: "Inter", sans-serif; box-sizing: border-box; }
         body, html { margin: 0; padding: 0; overflow: hidden; background: #f8fafc; }

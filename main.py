@@ -20,6 +20,12 @@ def serve_graph(graph_id: str):
 
 app.on_shutdown(_neo4j_viz.close)
 
+# ★ 수식(LaTeX) 렌더링용 MathJax 를 외부 CDN 대신 로컬 파일로 직접 서빙한다.
+#   사내망이 외부 CDN(jsdelivr 등)을 차단/지연시켜 수식이 렌더링되지 않는 문제를
+#   막기 위함 — static/mathjax/tex-mml-chtml.js (npm mathjax@3.2.2 의
+#   es5 combined-component 단일 파일, 외부 의존성 없이 그 자체로 완결됨).
+app.add_static_files('/mathjax', 'static/mathjax')
+
 ui.page('/')(build_chat_page)
 
 ui.run(title='KMap', port=8080, reload=False, dark=False,
