@@ -1348,6 +1348,9 @@ recency_focus 판단 규칙 (매우 중요):
                 lines.append(f"  출처: {d['source_url']}")
             if body:
                 lines.append(f"  {body_label}: {body}")
+        n_with_body = sum(1 for d in docs if (d.get('body') or '').strip())
+        self._dbg(2, f"[Debug] {doc_label} 문서 원문 컨텍스트: {len(docs)}건 구성 "
+                     f"(본문 있음 {n_with_body}건 / 본문 없음 {len(docs) - n_with_body}건)")
         return "\n".join(lines)
 
     def _collect_doc_ids(self, rows: list[dict]) -> set[str]:
@@ -1570,6 +1573,9 @@ recency_focus 판단 규칙 (매우 중요):
             if context != _NO_RESULT:
                 sections.append(f"=== {ds} ({desc}) ===\n{context}")
                 active_datasets.append(ds)
+                self._dbg(1, f"[Debug] {ds} 컨텍스트 길이: {len(context):,}자 → LLM 프롬프트에 포함됨")
+            else:
+                self._dbg(1, f"[Debug] {ds} 컨텍스트 없음(_NO_RESULT) → LLM 프롬프트에서 제외됨")
 
         combined_context = "\n\n".join(sections) if sections else _NO_RESULT
 
@@ -1655,6 +1661,10 @@ recency_focus 판단 규칙 (매우 중요):
   답하세요 (내부 문서에 대해 실제 날짜(YYYY-MM-DD)를 추측해서 답하지 마세요).
   반면 PapersDB(논문)는 정확한 날짜 그대로 컨텍스트에 있으니 날짜로 답하세요.
 - 이전 대화에서 언급된 메타데이터도 참고하세요.
+- ★ 컨텍스트에 여러 데이터셋(예: ReportsDB, Confluence)의 "=== 데이터셋명 ===" 섹션이
+  함께 있으면, 특정 데이터셋만 쓰지 말고 모든 섹션의 내용을 빠짐없이 반영해 답하세요.
+  특히 "기간(주차) 안의 보고문서를 표로 요약" 같은 열거형 질문은, 각 섹션의 문서를
+  하나도 누락하지 말고 전부 표에 포함하세요.
 - 컨텍스트와 이전 대화 모두에 없는 내용만 모른다고 답하세요.
 - 답변은 한국어로 작성하세요.
 
