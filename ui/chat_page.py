@@ -55,10 +55,25 @@ def _wrap_bare_latex(text: str) -> str:
     return ''.join(parts)
 
 
+# ★ Gemma4 등 일부 모델은 수식 하나를 자기가 또 괄호로 겹겹이 감싸는 경우가 있다
+#   (예: "((\text{Pt}))"). \(...\) 자체가 이미 수식 경계이므로, 그 바로 앞/뒤에
+#   붙은 리터럴 '(' ')' 가 여러 겹이면 한 겹만 남겨 "((Pt))" 처럼 괄호가 중복
+#   표시되는 것을 막는다.
+_REDUNDANT_OPEN_RE  = re.compile(r'\(+(?=\\\()')
+_REDUNDANT_CLOSE_RE = re.compile(r'(?<=\\\))\)+')
+
+
+def _collapse_redundant_parens(text: str) -> str:
+    text = _REDUNDANT_OPEN_RE.sub('(', text)
+    text = _REDUNDANT_CLOSE_RE.sub(')', text)
+    return text
+
+
 def _convert_math_delims(text: str) -> str:
     text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
     text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
     text = _wrap_bare_latex(text)
+    text = _collapse_redundant_parens(text)
     return text
 
 
