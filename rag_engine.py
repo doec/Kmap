@@ -376,16 +376,21 @@ DATASETS: dict = {
 # ★ 켬/끔 스위치가 꺼진 데이터셋은 DATASETS 에서 완전히 제거한다 — 이후 모든 로직
 #   (LLM 의 target_datasets 자동 선택, 탭 목록, 검색 등)이 DATASETS 를 기준으로
 #   동작하므로, 여기서 빼두면 실제 Neo4j 데이터는 그대로 두고도 검색에서 완전히
-#   제외된다 (남은 데이터셋이 하나도 없으면 최소 1개는 남겨 앱이 죽지 않게 한다).
+#   제외된다.
 _DATASET_ENABLED = {
     REPORTS_DATASET:    REPORTS_ENABLED,
     PAPERS_DATASET:     PAPERS_ENABLED,
     CONFLUENCE_DATASET: CONFLUENCE_ENABLED,
 }
-DATASETS = {ds: cfg for ds, cfg in DATASETS.items() if _DATASET_ENABLED.get(ds, True)}
+_ALL_DATASETS_UNFILTERED = DATASETS
+DATASETS = {ds: cfg for ds, cfg in _ALL_DATASETS_UNFILTERED.items() if _DATASET_ENABLED.get(ds, True)}
 if not DATASETS:
-    print("[Debug] 경고: 모든 데이터셋이 꺼져 있어 최소 1개(첫 항목)를 강제로 켭니다.")
-    DATASETS = {REPORTS_DATASET: {}}
+    # 전부 꺼져 있으면 검색할 데이터가 아예 없어지므로, 완전한 설정을 가진 첫
+    # 데이터셋을 그대로(빈 dict 아님) 강제로 살려 앱이 죽지 않게 한다.
+    _fallback_ds, _fallback_cfg = next(iter(_ALL_DATASETS_UNFILTERED.items()))
+    print(f"[Debug] 경고: 모든 데이터셋이 꺼져 있어 '{_fallback_ds}'를 강제로 켭니다 "
+          f"(.env 의 NEO4J_*_ENABLED 를 최소 하나는 true 로 설정하세요).")
+    DATASETS = {_fallback_ds: _fallback_cfg}
 
 _NO_RESULT = "관련 트리플을 찾지 못했습니다."
 
