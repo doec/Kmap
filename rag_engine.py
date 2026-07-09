@@ -508,8 +508,15 @@ class GraphRAG:
   "recency_focus": true 또는 false,
   "year_week": "YYYY-WNN 또는 null",
   "year_week_from": "YYYY-WNN 또는 null",
-  "year_week_to": "YYYY-WNN 또는 null"
+  "year_week_to": "YYYY-WNN 또는 null",
+  "full_content": true 또는 false
 }}
+
+full_content 판단 규칙:
+- "전체를 보여줘", "전문을 보여줘", "원문 그대로", "요약하지 말고 전부", "생략하지 말고
+  다 보여줘" 처럼 문서 본문을 자르거나 요약하지 말고 있는 그대로 전부 보여달라는
+  의도면 → true.
+- 그 외(일반적인 질문/요약 요청)는 → false.
 
 author_names 판단 규칙 (매우 중요):
 - 질문이 "그 사람이 쓴 논문/보고서", "이창수가 작성한 문서", "Tao Li 최근 논문" 처럼
@@ -705,6 +712,7 @@ recency_focus 판단 규칙 (매우 중요):
                 'year_week_from':  year_week_from,
                 'year_week_to':    year_week_to,
                 'target_datasets': target_datasets,
+                'full_content':    bool(parsed.get('full_content', False)),
                 'extraction_failed': False,
             }
         except Exception as e:
@@ -717,6 +725,7 @@ recency_focus 판단 규칙 (매우 중요):
                     'recency_focus': False, 'year_week': None,
                     'year_week_from': None, 'year_week_to': None,
                     'target_datasets': list(DATASETS.keys()),
+                    'full_content': False,
                     'extraction_failed': True}
 
     def _build_return_clause(self, return_fields: list) -> str:
@@ -1345,7 +1354,8 @@ recency_focus 판단 규칙 (매우 중요):
 
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict,
-                         recency_focus: bool = False) -> str:
+                         recency_focus: bool = False,
+                         full_content: bool = False) -> str:
         """
         doc_id 집합을 받아 Paper/Report 메타 노드에서 제목·본문·출처를 조회하고,
         LLM 컨텍스트에 넣을 "관련 문서" 섹션 문자열로 만든다.
@@ -1425,7 +1435,10 @@ recency_focus 판단 규칙 (매우 중요):
         lines = ["[관련 문서 원문]"]
         for d in docs:
             body = (d.get('body') or '').strip().replace('\n', ' ')
-            if len(body) > DOC_BODY_MAXLEN:
+            # ★ "전체/전문/원문 그대로 보여줘" 처럼 전체 내용을 원하는 질문이면
+            #   DOC_BODY_MAXLEN(기본 700자) 로 자르지 않고 본문 전체를 그대로 넣는다.
+            #   (평소엔 컨텍스트 폭주를 막기 위해 잘라서 보여준다.)
+            if not full_content and len(body) > DOC_BODY_MAXLEN:
                 body = body[:DOC_BODY_MAXLEN] + " …(생략)"
 
             header = f"- {d.get('title') or d.get('doc_id')}"
@@ -1464,7 +1477,8 @@ recency_focus 판단 규칙 (매우 중요):
                  year_week: str = None,
                  year_week_from: str = None,
                  year_week_to: str = None,
-                 author_names: str = None) -> str:
+                 author_names: str = None,
+                 full_content: bool = False) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -1582,7 +1596,7 @@ recency_focus 판단 규칙 (매우 중요):
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
               f"E(주차)={len(ids_e)} → 합집합 {len(doc_ids)}")
 
-        docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus)
+        docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus, full_content=full_content)
         if doc_ids and not docs_ctx:
             self._dbg(0, f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
                   f"(doc_id 불일치 또는 doc_label/속성 확인 필요). 예시 id: {list(doc_ids)[:3]}")
@@ -1630,6 +1644,7 @@ recency_focus 판단 규칙 (매우 중요):
         year_week_from     = extracted['year_week_from']
         year_week_to       = extracted['year_week_to']
         target_datasets    = extracted['target_datasets']
+        full_content       = extracted['full_content']
 
         # ★ 질문 분석(키워드/날짜/저자 추출) 자체가 실패했으면(LLM API 오류 등),
         #   원본 질문 전체를 키워드로 그냥 쓰는 저품질 폴백으로 넘어간다 — 날짜/저자
@@ -1646,6 +1661,8 @@ recency_focus 판단 규칙 (매우 중요):
         if _norm_kw_preview != extracted_keywords:
             self._dbg(1, f"[Debug] 코드→물질명 변환: {extracted_keywords} → {_norm_kw_preview}")
         self._dbg(1, f"[Debug] 저자명(D채널 전용): {author_names or '(없음)'}")
+        if full_content:
+            self._dbg(1, "[Debug] 전체 내용 요청 감지 → 문서 본문 잘라내지 않음")
         week_disp = (f"{year_week_from}~{year_week_to}"
                      if (year_week_from or year_week_to) else year_week)
         self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
@@ -1685,7 +1702,7 @@ recency_focus 판단 규칙 (매우 중요):
                         self.retrieve,
                         extracted_keywords, query, ds, mode,
                         DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
-                        year_week_from, year_week_to, author_names
+                        year_week_from, year_week_to, author_names, full_content
                     )
                     for ds in search_targets
                 }
@@ -1725,6 +1742,20 @@ recency_focus 판단 규칙 (매우 중요):
             dataset_info = "\n\n".join(prompt_sections)
         else:
             dataset_info = "검색된 데이터셋 없음"
+
+        # ★ "전체/전문을 보여줘" 요청이면, 컨텍스트의 문서 본문(이미 안 잘림)을
+        #   LLM 이 또 요약/축약하지 말고 있는 그대로 전부 옮기도록 명시한다.
+        #   (검색 단계에서 DOC_BODY_MAXLEN 절단을 이미 껐어도, LLM 이 답변을 짧게
+        #   쓰려고 스스로 요약해버리면 "생략" 문제가 똑같이 재발할 수 있다.)
+        full_content_rule = ""
+        if full_content:
+            full_content_rule = """
+
+[전체 내용 요청 — 반드시 지킬 것]
+사용자가 문서 내용을 요약하지 말고 전체/전문을 그대로 보여달라고 요청했습니다.
+컨텍스트의 "[관련 문서 원문]" 본문을 절대 요약하거나 임의로 줄이지 말고, 있는
+그대로 전부 옮겨서 답하세요. "…(생략)", "요약하면" 같은 표현으로 내용을 줄이지
+마세요."""
 
         # ★ 여러 데이터셋이 검색된 경우, 답변에서 데이터셋별로 소제목을 강제해
         #   LLM 이 한쪽(주로 첫 번째)만 요약하고 나머지를 빠뜨리는 문제를 막는다.
@@ -1790,7 +1821,7 @@ recency_focus 판단 규칙 (매우 중요):
         system_prompt = f"""당신은 DRAM MIM 커패시터 소재 연구 전문가입니다.
 다음 지식 그래프 컨텍스트가 제공됩니다.
 
-{dataset_info}{date_info}{code_info}{multi_dataset_rule}
+{dataset_info}{date_info}{code_info}{multi_dataset_rule}{full_content_rule}
 
 답변 규칙:
 - 제공된 컨텍스트와 이전 대화 내용을 적극적으로 활용하여 답하세요.
