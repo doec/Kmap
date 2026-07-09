@@ -706,7 +706,7 @@ def build_chat_page():
                     with ui.element('div').classes(
                         'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
                     ).style('max-width:calc(100% - 36px); color:#334155;'):
-                        ui.markdown(_linkify(content))
+                        ui.markdown(_linkify(content), extras=['tables', 'fenced-code-blocks'])
                         if graph_id:
                             _add_subgraph_widget(graph_id, _page_client)
 
@@ -829,7 +829,7 @@ def build_chat_page():
                 if md_element is None:
                     status_box.delete()
                     with ai_col_ref:
-                        md_element = ui.markdown('')
+                        md_element = ui.markdown('', extras=['tables', 'fenced-code-blocks'])
 
                 chunk_buffer += chunk
                 chunk_count  += 1
