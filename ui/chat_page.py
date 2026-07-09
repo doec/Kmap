@@ -36,6 +36,21 @@ _DOI_RE = re.compile(
 _MATH_DISPLAY_RE = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
 _MATH_INLINE_RE  = re.compile(r'\$(?!\s)([^\$\n]+?)(?<!\s)\$')
 
+# ★ Gemma4 는 종종 \( / \) / \[ / \] 를 짝이 안 맞게(한쪽만, 또는 중첩되게) 흘려
+#   놓는다(예: "(\text{TiO}2\)" — 여는 쪽엔 backslash 가 없고 닫는 쪽에만 있음).
+#   이걸 그대로 믿고 그 위에 우리가 또 \(...\) 로 감싸면, 짝이 안 맞는 delimiter가
+#   겹쳐서 수식 경계가 뒤엉키고 그 사이의 한글 본문까지 수식 폭에 잘못 포함되어
+#   MathJax 수식 폰트로 렌더링되는(그래서 "이상하게 굵게/다르게 보인다") 문제가
+#   생긴다. 그래서 모델이 미리 흘린 \(/\)/\[/\] 는 신뢰하지 않고 backslash 만 제거해
+#   "그냥 괄호"로 되돌린 뒤, 아래 로직이 완전한 수식 구간만 우리 판단으로 새로
+#   감싸도록 한다.
+_STRAY_DELIM_RE = re.compile(r'\\([()\[\]])')
+
+
+def _neutralize_stray_delims(text: str) -> str:
+    return _STRAY_DELIM_RE.sub(lambda m: m.group(1), text)
+
+
 # ★ 모델에 따라 $...$ 구분자 없이 LaTeX 명령어를 맨 텍스트로 내놓는 경우가 있다
 #   (Gemma4에서 관찰됨: "\text{Al}_2\text{O}_3", "\text{J}(\text{TiO}_2) \gg ..." 등).
 #   구분자가 없으면 MathJax 가 인식을 못 해 그대로 노출되므로, "공백 없이 이어지는
@@ -63,6 +78,7 @@ def _wrap_bare_latex(text: str) -> str:
 
 
 def _convert_math_delims(text: str) -> str:
+    text = _neutralize_stray_delims(text)
     text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
     text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
     text = _wrap_bare_latex(text)
