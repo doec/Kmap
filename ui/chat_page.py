@@ -793,6 +793,13 @@ def build_chat_page():
                 }
             """
 
+            # ★ LLM 이 (특히 표를 그리다가) 같은 글자를 무한히 반복하며 답변이 끝나지
+            #   않는 "반복 루프" 실패 모드에 빠지는 경우가 있다(약한/경량 모델에서
+            #   컨텍스트가 크거나 표 형식을 요청할 때 관찰됨, 예: "|" 수천 개 반복).
+            #   같은 글자가 REPEAT_LIMIT 번 넘게 연속되면 반복 루프로 간주하고
+            #   스트림 소비를 중단해, 사용자가 끝없이 같은 글자만 보는 걸 막는다.
+            _REPEAT_RE = re.compile(r'(.)\1{29,}$', re.DOTALL)
+
             while True:
                 event = await loop.run_in_executor(None, next, gen, None)
                 if event is None:
@@ -826,6 +833,18 @@ def build_chat_page():
 
                 chunk_buffer += chunk
                 chunk_count  += 1
+
+                # ★ 매 청크마다 반복 루프 여부를 검사한다 (누적되기 전에 빨리 잡아야
+                #   불필요한 토큰 생성/네트워크 낭비와 화면 스팸을 최소화할 수 있음).
+                if _REPEAT_RE.search(full_text + chunk_buffer):
+                    # 반복된 꼬리 부분은 잘라내고, 반복 시작 직전까지만 남긴다.
+                    combined = _REPEAT_RE.sub('', full_text + chunk_buffer)
+                    full_text, chunk_buffer = combined, ''
+                    full_text += "\n\n_(반복 오류가 감지되어 답변 생성을 중단했습니다. 다시 질문해 주세요.)_"
+                    md_element.set_content(full_text)
+                    print("[Debug] LLM 응답 반복 루프 감지 → 스트림 중단")
+                    break
+
                 if chunk_count % 5 == 0:
                     full_text    += chunk_buffer
                     chunk_buffer  = ''
