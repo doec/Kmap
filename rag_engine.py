@@ -1381,8 +1381,15 @@ recency_focus 판단 규칙 (매우 중요):
         # 쿼리 문자열에 직접 끼워넣는다(값이 아니라 스키마라 파라미터화 불가).
         # body_field(content_norm 등)가 비어 있는 노드를 대비해 원본 content 로 폴백.
         # (Paper 노드엔 content 가 없으므로 COALESCE 는 자연히 body_field 값만 남긴다)
+        # ★ full_content(원문/전체를 그대로 보여달라는 요청)일 때는 우선순위를 뒤집어
+        #   원본 content(사내 코드 그대로, 예: BD30)를 먼저 쓰고 없으면 정규화본
+        #   (content_norm, 물질명 변환본)으로 폴백한다 — "내부 문서를 그대로 보여줘"
+        #   요청에서 코드가 물질명으로 바뀐 채 나오는 문제를 막기 위함. 평소(검색/요약
+        #   목적)에는 반대로 content_norm 을 우선해 어휘를 통일한다.
         # ★ journal 은 Paper 노드 전용, year_week 는 Report/Confl_doc 노드 전용 필드
         #   (다른 데이터셋엔 없으면 null 반환되어 meta_bits 에서 자연히 제외된다).
+        body_expr = (f"COALESCE(m.content, m.{body_field})" if full_content
+                     else f"COALESCE(m.{body_field}, m.content)")
         order_clause = "ORDER BY m.date DESC" if recency_focus else ""
         query_str = f"""
             MATCH (m:{doc_label})
@@ -1394,7 +1401,7 @@ recency_focus 판단 규칙 (매우 중요):
                    m.source_url AS source_url,
                    m.journal    AS journal,
                    m.year_week  AS year_week,
-                   COALESCE(m.{body_field}, m.content) AS body
+                   {body_expr} AS body
             {order_clause}
         """
         try:
