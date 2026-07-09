@@ -9,6 +9,17 @@ from nicegui import ui
 from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, CONFLUENCE_DATASET, DATASETS
 from retriever.neo4j_retriever import Neo4jRetriever
 
+# ── 서브그래프 표시 여부 판단용: 답변에 엔티티 이름이 "언급됐는지" 확인할 때 LaTeX
+#   표기(\text{SrTiO}_3 등)와 공백/대소문자 차이 때문에 완전히 같은 문자열로는
+#   못 찾는 문제가 있다. 이 문자들을 지우고 비교하면 "SrTiO3"와 "\text{SrTiO}_3"
+#   가 같은 것으로 인식된다.
+_MENTION_NORMALIZE_RE = re.compile(r'[\\{}_$()\[\]\s]+')
+
+
+def _normalize_for_mention_check(s: str) -> str:
+    return _MENTION_NORMALIZE_RE.sub('', s).lower()
+
+
 # ── linkify: 답변 텍스트의 맨 URL / DOI 를 마크다운 링크로 변환 ───────────────────────────────
 # 이미 마크다운 링크 형태( ](url) , <url> )인 것은 건드리지 않는다.
 #
@@ -806,7 +817,11 @@ def build_chat_page():
             #   언급하지 않은 경우에도 non-empty 라서 위젯이 계속 뜨는 문제가 있었다.
             #   답변 텍스트에 검색된 엔티티 이름이 실제로 등장하는지 확인해, 하나도
             #   안 쓰였으면(=답변이 트리플을 활용하지 않았으면) 위젯을 띄우지 않는다.
-            used_nodes = [n for n in rag.last_retrieved_nodes if n and n in full_text]
+            _norm_full_text = _normalize_for_mention_check(full_text)
+            used_nodes = [
+                n for n in rag.last_retrieved_nodes
+                if n and _normalize_for_mention_check(n) in _norm_full_text
+            ]
             graph_id = None
             if used_nodes and ai_col_ref is not None:
                 try:
