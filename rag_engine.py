@@ -1638,35 +1638,46 @@ recency_focus 판단 규칙 (매우 중요):
         self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
               f"주차: {week_disp} | 선택된 데이터셋: {target_datasets}")
 
-        if dataset and dataset != 'All' and dataset in DATASETS:
-            # 사용자가 특정 탭을 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
-            search_targets = [dataset]
+        # ★ "안녕" 같은 인사말/잡담은 키워드 추출 결과가 비어 있다 — 이런 경우 검색
+        #   자체가 무의미하다(빈 텍스트로 벡터 임베딩을 만들면 임의의 최근접 이웃이
+        #   뽑혀 나오는데, 이게 실제로는 아무 의미 없는 결과라 시간만 낭비된다).
+        #   키워드가 하나도 없으면 검색을 통째로 건너뛴다.
+        skip_search = not extracted_keywords.strip()
+        if skip_search:
+            self._dbg(1, "[Debug] 추출된 키워드가 없어 검색을 건너뜁니다 (일반 대화로 처리)")
+            search_targets = []
+            results = {}
+            _t_retrieve = 0.0
         else:
-            # "전체" 탭일 때만 LLM이 판단한 관련 데이터셋으로 검색 범위를 좁힌다.
-            # (판단이 애매하면 target_datasets 자체가 전체 목록으로 안전하게 폴백됨)
-            search_targets = target_datasets
+            if dataset and dataset != 'All' and dataset in DATASETS:
+                # 사용자가 특정 탭을 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
+                search_targets = [dataset]
+            else:
+                # "전체" 탭일 때만 LLM이 판단한 관련 데이터셋으로 검색 범위를 좁힌다.
+                # (판단이 애매하면 target_datasets 자체가 전체 목록으로 안전하게 폴백됨)
+                search_targets = target_datasets
 
-        # [단계 2] 지식 그래프 검색 + N-hop 확장
-        #   대상 데이터셋들의 hop 수를 모아 표시 (보통 2-hop). retrieve() 내부에서
-        #   text 검색 시 실제 N-hop 확장이 수행된다.
-        hop_set = {(DATASETS[ds].get('search_hops') or DEFAULT_SEARCH_HOPS)
-                   for ds in search_targets}
-        hop_label = f"{max(hop_set)}-hop " if hop_set else ""
-        yield {'type': 'status', 'text': f'📚 지식 그래프 검색 중… ({hop_label}확장)'}
+            # [단계 2] 지식 그래프 검색 + N-hop 확장
+            #   대상 데이터셋들의 hop 수를 모아 표시 (보통 2-hop). retrieve() 내부에서
+            #   text 검색 시 실제 N-hop 확장이 수행된다.
+            hop_set = {(DATASETS[ds].get('search_hops') or DEFAULT_SEARCH_HOPS)
+                       for ds in search_targets}
+            hop_label = f"{max(hop_set)}-hop " if hop_set else ""
+            yield {'type': 'status', 'text': f'📚 지식 그래프 검색 중… ({hop_label}확장)'}
 
-        _t_retrieve_start = time.monotonic()
-        with ThreadPoolExecutor(max_workers=len(search_targets)) as executor:
-            futures = {
-                ds: executor.submit(
-                    self.retrieve,
-                    extracted_keywords, query, ds, mode,
-                    DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
-                    year_week_from, year_week_to, author_names
-                )
-                for ds in search_targets
-            }
-            results = {ds: f.result() for ds, f in futures.items()}
-        _t_retrieve = time.monotonic() - _t_retrieve_start
+            _t_retrieve_start = time.monotonic()
+            with ThreadPoolExecutor(max_workers=len(search_targets)) as executor:
+                futures = {
+                    ds: executor.submit(
+                        self.retrieve,
+                        extracted_keywords, query, ds, mode,
+                        DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
+                        year_week_from, year_week_to, author_names
+                    )
+                    for ds in search_targets
+                }
+                results = {ds: f.result() for ds, f in futures.items()}
+            _t_retrieve = time.monotonic() - _t_retrieve_start
 
         self.last_retrieved_nodes = list(self._pending_nodes)
         self._dbg(1, f"[Debug] 검색된 노드 수: {len(self.last_retrieved_nodes)}")
