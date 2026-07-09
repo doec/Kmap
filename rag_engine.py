@@ -1441,7 +1441,13 @@ recency_focus 판단 규칙 (매우 중요):
 
         lines = ["[관련 문서 원문]"]
         for d in docs:
-            body = (d.get('body') or '').strip().replace('\n', ' ')
+            # ★ 예전엔 본문의 모든 줄바꿈을 공백으로 치환해 "한 줄"로 뭉갰는데,
+            #   원본 문서(특히 Confluence 주간보고)에 마크다운 표가 포함된 경우
+            #   그 표의 줄 구조(헤더/구분선/데이터 행)까지 통째로 파괴되어 LLM 에게
+            #   이미 망가진 입력이 전달되고, LLM 은 그걸 최대한 표로 복원하려다
+            #   형식이 어긋난 표를 내놓는 문제가 있었다(실제 원인으로 확인됨).
+            #   이제 줄바꿈은 보존하고, 과도한 연속 빈 줄만 1개로 줄인다.
+            body = re.sub(r'\n{3,}', '\n\n', (d.get('body') or '').strip())
             # ★ "전체/전문/원문 그대로 보여줘" 처럼 전체 내용을 원하는 질문이면
             #   DOC_BODY_MAXLEN(기본 700자) 로 자르지 않고 본문 전체를 그대로 넣는다.
             #   (평소엔 컨텍스트 폭주를 막기 위해 잘라서 보여준다.)
@@ -1465,7 +1471,13 @@ recency_focus 판단 규칙 (매우 중요):
             if d.get('source_url'):
                 lines.append(f"  출처: {d['source_url']}")
             if body:
-                lines.append(f"  {body_label}: {body}")
+                # ★ body 가 여러 줄(표 등 구조 포함)이면 "내용:" 라벨과 같은 줄에
+                #   억지로 붙이지 않고 다음 줄부터 별도 블록으로 넣어 구조가
+                #   깨지지 않게 한다. 한 줄짜리 본문은 기존처럼 한 줄로 표기.
+                if '\n' in body:
+                    lines.append(f"  {body_label}:\n{body}")
+                else:
+                    lines.append(f"  {body_label}: {body}")
         n_with_body = sum(1 for d in docs if (d.get('body') or '').strip())
         self._dbg(2, f"[Debug] {doc_label} 문서 원문 컨텍스트: {len(docs)}건 구성 "
                      f"(본문 있음 {n_with_body}건 / 본문 없음 {len(docs) - n_with_body}건)")
