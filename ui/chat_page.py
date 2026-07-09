@@ -311,7 +311,13 @@ def build_chat_page():
         /* chat bubbles */
         .user-bubble { background: linear-gradient(135deg, #6366f1, #8b5cf6); word-break: break-word; white-space: pre-wrap; }
         .ai-bubble { background: #f1f5f9; overflow-x: auto; color: #334155; }
-        .ai-bubble p, .ai-bubble li, .ai-bubble td { color: #334155; margin: 0; }
+        /* ★ markdown2 는 단일 줄바꿈(\n)을 <br> 로 바꾸지 않고 그냥 이어붙인다.
+           HTML 은 원래 줄바꿈 문자를 무시하고 한 줄로 붙여 보여주므로,
+           pre-wrap 이 없으면 LLM 이 줄바꿈으로만 구분한 목록/문단이 전부
+           한 줄로 뭉쳐 보인다. 표(<table>)/코드(<pre>)는 이미 자체 줄 구조가
+           있는 블록 요소라 pre-wrap 의 영향을 받지 않는다. */
+        .ai-bubble p, .ai-bubble li { color: #334155; margin: 0; white-space: pre-wrap; }
+        .ai-bubble td { color: #334155; margin: 0; }
         .ai-bubble * { color: #334155; }
         .ai-bubble code { background: #e2e8f0; color: #1e293b; padding: 1px 5px; border-radius: 4px; }
         .ai-bubble pre { background: #e2e8f0; padding: 8px 12px; border-radius: 8px; overflow-x: auto; }
