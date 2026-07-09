@@ -77,11 +77,34 @@ def _wrap_bare_latex(text: str) -> str:
     return ''.join(parts)
 
 
+def _protect_emphasis_chars_in_math(text: str) -> str:
+    """
+    \(...\) / \[...\] 수식 구간 안의 '_' 와 '*' 를 HTML 숫자 문자 참조로 바꾼다.
+
+    ★ \(...\) 로 감싸는 것만으로는 마크다운으로부터 내용을 보호하지 못한다 —
+    마크다운은 \( \) 를 그냥 의미 없는 글자로 보고, 그 안의 '_'/'*' 를 여전히
+    강조(이탤릭/볼드) 마커로 해석할 수 있다. 그러면 수식 안의 아래첨자용 '_'가
+    문서 뒤쪽 어딘가의 다른 '_'와 짝지어져 그 사이 전체가 굵게/기울임으로
+    바뀌어버리는 문제가 생긴다(실제 관찰된 증상).
+
+    '_' -> '&#95;', '*' -> '&#42;' 로 바꿔두면 마크다운에는 그냥 무해한 문자열로
+    보여 건드리지 않고, 브라우저가 HTML 을 파싱할 때 이 문자 참조를 자동으로
+    원래 문자로 복원하므로 MathJax 는 최종적으로 정상적인 '_'(아래첨자)를 보게
+    된다 — 마크다운과 MathJax 양쪽의 요구사항을 동시에 만족시키는 방법이다.
+    """
+    parts = _ALREADY_DELIM_RE.split(text)
+    for i, part in enumerate(parts):
+        if i % 2 == 1:   # 홀수 인덱스 = 수식 구간
+            parts[i] = part.replace('_', '&#95;').replace('*', '&#42;')
+    return ''.join(parts)
+
+
 def _convert_math_delims(text: str) -> str:
     text = _neutralize_stray_delims(text)
     text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
     text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
     text = _wrap_bare_latex(text)
+    text = _protect_emphasis_chars_in_math(text)
     return text
 
 
