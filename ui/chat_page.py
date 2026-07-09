@@ -801,17 +801,27 @@ def build_chat_page():
                 pass
 
             # ── subgraph toggle ───────────────────────────────────────────────────────────────────────────────────
+            # ★ rag.last_retrieved_nodes 는 "검색 단계에서 트리플이 나왔는지"만 알려준다 —
+            #   검색은 됐지만 최종 답변이 문서 목록/표 등으로만 구성되어 그 관계를 실제로
+            #   언급하지 않은 경우에도 non-empty 라서 위젯이 계속 뜨는 문제가 있었다.
+            #   답변 텍스트에 검색된 엔티티 이름이 실제로 등장하는지 확인해, 하나도
+            #   안 쓰였으면(=답변이 트리플을 활용하지 않았으면) 위젯을 띄우지 않는다.
+            used_nodes = [n for n in rag.last_retrieved_nodes if n and n in full_text]
             graph_id = None
-            if rag.last_retrieved_nodes and ai_col_ref is not None:
+            if used_nodes and ai_col_ref is not None:
                 try:
                     graph_id = _neo4j_viz.generate_rag_result_graph(
                         rag.last_retrieved_nodes, current_dataset
                     )
-                    print(f"[subgraph] widget 생성: graph_id={graph_id}, nodes={len(rag.last_retrieved_nodes)}")
+                    print(f"[subgraph] widget 생성: graph_id={graph_id}, "
+                          f"nodes={len(rag.last_retrieved_nodes)} (답변에 언급된 노드 {len(used_nodes)}개)")
                     with ai_col_ref:
                         _add_subgraph_widget(graph_id, _page_client)
                 except Exception as e:
                     print(f"서브그래프 생성 오류: {e}")
+            elif rag.last_retrieved_nodes:
+                print(f"[subgraph] 생략: 검색된 노드 {len(rag.last_retrieved_nodes)}개 중 "
+                      f"답변에 언급된 노드가 없음")
 
             # ── save message ────────────────────────────────────────────────────────────────────────────────────────
             ai_msg = {'role': 'assistant', 'content': full_text, 'graph_id': graph_id}
