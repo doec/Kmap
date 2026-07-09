@@ -163,6 +163,20 @@ PAPERS_DESC     = os.getenv('NEO4J_PAPERS_DESC',     '논문 기반 인과관계
 CONFLUENCE_DATASET = os.getenv('NEO4J_CONFLUENCE_DATASET', 'Confluence')
 CONFLUENCE_DESC    = os.getenv('NEO4J_CONFLUENCE_DESC',    'Confluence 주간보고/문서')
 
+# ★ 데이터셋별 켬/끔 스위치. Neo4j 의 실제 데이터는 그대로 두고, 검색 대상에서만
+#   빼고 싶을 때 사용한다 (예: 문서를 아직 안 넣었거나, 잠시 검색에서 제외하고
+#   싶을 때). .env 에 아래처럼 추가하면 된다 (기본값은 true, 즉 항상 켜짐):
+#     NEO4J_REPORTS_ENABLED=false
+#     NEO4J_PAPERS_ENABLED=false
+#     NEO4J_CONFLUENCE_ENABLED=false
+#   "false"/"0"/"no" (대소문자 무관) 만 꺼짐으로 인식하고, 그 외(빈 값 포함)는 켜짐.
+def _env_enabled(key: str) -> bool:
+    return os.getenv(key, 'true').strip().lower() not in ('false', '0', 'no')
+
+REPORTS_ENABLED    = _env_enabled('NEO4J_REPORTS_ENABLED')
+PAPERS_ENABLED     = _env_enabled('NEO4J_PAPERS_ENABLED')
+CONFLUENCE_ENABLED = _env_enabled('NEO4J_CONFLUENCE_ENABLED')
+
 DEFAULT_SEARCH_LIMIT = 50
 DEFAULT_SEARCH_HOPS  = 2
 DEFAULT_SEARCH_MODE  = None   # None / 'text' / 'vector' / 'hybrid'
@@ -358,6 +372,20 @@ DATASETS: dict = {
         'normalize_query':  True,
     },
 }
+
+# ★ 켬/끔 스위치가 꺼진 데이터셋은 DATASETS 에서 완전히 제거한다 — 이후 모든 로직
+#   (LLM 의 target_datasets 자동 선택, 탭 목록, 검색 등)이 DATASETS 를 기준으로
+#   동작하므로, 여기서 빼두면 실제 Neo4j 데이터는 그대로 두고도 검색에서 완전히
+#   제외된다 (남은 데이터셋이 하나도 없으면 최소 1개는 남겨 앱이 죽지 않게 한다).
+_DATASET_ENABLED = {
+    REPORTS_DATASET:    REPORTS_ENABLED,
+    PAPERS_DATASET:     PAPERS_ENABLED,
+    CONFLUENCE_DATASET: CONFLUENCE_ENABLED,
+}
+DATASETS = {ds: cfg for ds, cfg in DATASETS.items() if _DATASET_ENABLED.get(ds, True)}
+if not DATASETS:
+    print("[Debug] 경고: 모든 데이터셋이 꺼져 있어 최소 1개(첫 항목)를 강제로 켭니다.")
+    DATASETS = {REPORTS_DATASET: {}}
 
 _NO_RESULT = "관련 트리플을 찾지 못했습니다."
 

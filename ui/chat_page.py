@@ -108,12 +108,18 @@ _DATASET_CHIP_COLOR = {
 }
 
 # ── dataset tab labels ──────────────────────────────────────────────────────────────────────────────────
+# ★ .env 의 NEO4J_*_ENABLED 로 꺼진 데이터셋은 DATASETS 에서 이미 빠져 있으므로,
+#   그 탭도 자동으로 숨긴다 (꺼진 데이터셋 탭을 눌러도 검색될 게 없어 혼란만 준다).
 _DATASET_TABS = [
     ("전체",    "All"),
     ("논문",    PAPERS_DATASET),
     ("ReportsDB", REPORTS_DATASET),
     ("Confluence", CONFLUENCE_DATASET),
     ("실험",    "ExperimentsDB"),   # future — disabled
+]
+_DATASET_TABS = [
+    (label, key) for label, key in _DATASET_TABS
+    if key in ("All", "ExperimentsDB") or key in DATASETS
 ]
 
 # ── search mode options ───────────────────────────────────────────────────────────────────────────────────
