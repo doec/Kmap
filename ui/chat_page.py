@@ -36,44 +36,36 @@ _DOI_RE = re.compile(
 _MATH_DISPLAY_RE = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
 _MATH_INLINE_RE  = re.compile(r'\$(?!\s)([^\$\n]+?)(?<!\s)\$')
 
-# ★ 모델에 따라 $...$ 구분자 없이 LaTeX 명령어(\text{Al}_2\text{O}_3 등)를 맨 텍스트로
-#   내놓는 경우가 있다(Gemma4에서 관찰됨). 구분자가 없으면 MathJax 가 인식을 못 해
-#   그대로 노출되므로, "백슬래시 명령어가 공백 없이 연속으로 이어지는" 구간을 찾아
-#   자동으로 \(...\) 로 감싼다 — 모델이 구분자를 쓰든 안 쓰든 결과를 통일한다.
-#   토큰 하나 = \명령어 + 선택적 {...} + 선택적 아래/위첨자(_x, _{...}, ^x, ^{...}).
-_LATEX_TOKEN = r'\\[a-zA-Z]+(?:\{[^{}]*\})?(?:[_^](?:\{[^{}]*\}|[^\s{}\\]))?'
-_BARE_LATEX_RE = re.compile(r'(?:' + _LATEX_TOKEN + r'){1,}')
+# ★ 모델에 따라 $...$ 구분자 없이 LaTeX 명령어를 맨 텍스트로 내놓는 경우가 있다
+#   (Gemma4에서 관찰됨: "\text{Al}_2\text{O}_3", "\text{J}(\text{TiO}_2) \gg ..." 등).
+#   구분자가 없으면 MathJax 가 인식을 못 해 그대로 노출되므로, "공백 없이 이어지는
+#   구간(run)" 중 백슬래시 명령어가 하나라도 포함된 run 전체를 통째로 \(...\) 로
+#   감싼다. 함수 표기처럼 일반 괄호 "(", ")" 가 명령어 사이에 끼어 있어도(예: 위의
+#   "J(...)") 같은 run 으로 취급해 하나의 수식으로 감싼다 — 모델이 구분자를 쓰든
+#   안 쓰든, 얼마나 복잡하게 섞어 쓰든 결과를 통일한다.
+#   문자 집합에 '.', '/', ':' 등을 포함하지 않아 URL/DOI(백슬래시가 없음)는 애초에
+#   대상이 되지 않는다 — _linkify 가 이후 별도로 처리한다.
+_RUN_RE = re.compile(r'[A-Za-z0-9(){}_^\\]+')
 # 이미 \(...\) / \[...\] 로 감싸진 구간은 건드리지 않도록 분리해서 처리한다.
 _ALREADY_DELIM_RE = re.compile(r'(\\\(.*?\\\)|\\\[.*?\\\])', re.DOTALL)
 
 
 def _wrap_bare_latex(text: str) -> str:
+    def _wrap_if_math(m: re.Match) -> str:
+        run = m.group(0)
+        return f'\\({run}\\)' if '\\' in run else run   # 백슬래시 명령어가 없는 run 은 그대로 둔다
+
     parts = _ALREADY_DELIM_RE.split(text)
     for i, part in enumerate(parts):
         if i % 2 == 0:   # 홀수 인덱스는 이미 감싸진 구간(그대로 유지)
-            parts[i] = _BARE_LATEX_RE.sub(lambda m: f'\\({m.group(0)}\\)', part)
+            parts[i] = _RUN_RE.sub(_wrap_if_math, part)
     return ''.join(parts)
-
-
-# ★ Gemma4 등 일부 모델은 수식 하나를 자기가 또 괄호로 겹겹이 감싸는 경우가 있다
-#   (예: "((\text{Pt}))"). \(...\) 자체가 이미 수식 경계이므로, 그 바로 앞/뒤에
-#   붙은 리터럴 '(' ')' 가 여러 겹이면 한 겹만 남겨 "((Pt))" 처럼 괄호가 중복
-#   표시되는 것을 막는다.
-_REDUNDANT_OPEN_RE  = re.compile(r'\(+(?=\\\()')
-_REDUNDANT_CLOSE_RE = re.compile(r'(?<=\\\))\)+')
-
-
-def _collapse_redundant_parens(text: str) -> str:
-    text = _REDUNDANT_OPEN_RE.sub('(', text)
-    text = _REDUNDANT_CLOSE_RE.sub(')', text)
-    return text
 
 
 def _convert_math_delims(text: str) -> str:
     text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
     text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
     text = _wrap_bare_latex(text)
-    text = _collapse_redundant_parens(text)
     return text
 
 
