@@ -86,6 +86,19 @@ UserID           = os.getenv('USER_ID')
 Send_System_Name = os.getenv('SEND_SYSTEM_NAME')
 
 
+def _short_err(e: Exception, maxlen: int = 300) -> str:
+    """
+    예외 메시지를 로그에 찍기 좋게 잘라준다.
+
+    ★ 사내 API 게이트웨이가 503 등 오류 시 HTML 에러 페이지 전체(CSS/SVG 포함,
+    수십~수백 줄)를 응답 본문으로 돌려주는 경우가 있는데, openai 라이브러리가
+    그 본문을 예외 메시지에 그대로 담아서 터미널 로그가 심하게 어지러워진다.
+    핵심(상태/원인)만 보이도록 앞부분만 자른다.
+    """
+    msg = str(e)
+    return msg if len(msg) <= maxlen else msg[:maxlen] + f"... (총 {len(msg)}자, 이하 생략)"
+
+
 def _validate_env_vars():
     """
     필수 환경 변수 검증
@@ -445,7 +458,7 @@ def ask_llm(USER_MESSAGE, SYSTEM_PROMPT="Semiconductor related workers",
         logger.error(f"응답 파싱 실패: {e}")
         return None
     except Exception as e:
-        logger.error(f"LLM 호출 실패 ({type(e).__name__}): {e}")
+        logger.error(f"LLM 호출 실패 ({type(e).__name__}): {_short_err(e)}")
         return None
 
     try:
@@ -544,7 +557,7 @@ def ask_llm_img(USER_MESSAGE, IMAGE_PATH,
         logger.error(f"응답 파싱 실패: {e}")
         return None
     except Exception as e:
-        logger.error(f"LLM 호출 실패 ({type(e).__name__}): {e}")
+        logger.error(f"LLM 호출 실패 ({type(e).__name__}): {_short_err(e)}")
         return None
 
     try:
@@ -779,7 +792,7 @@ def ask_llm_messages(messages: list[dict],
         logger.error(f"응답 파싱 실패: {e}")
         return None
     except Exception as e:
-        logger.error(f"LLM 호출 실패 ({type(e).__name__}): {e}")
+        logger.error(f"LLM 호출 실패 ({type(e).__name__}): {_short_err(e)}")
         return None
 
     try:
@@ -928,7 +941,7 @@ async def ask_llm_async(USER_MESSAGE, SYSTEM_PROMPT="Semiconductor related worke
         logger.error(f"응답 파싱 실패: {e}")
         return None
     except Exception as e:
-        logger.error(f"비동기 LLM 호출 실패 ({type(e).__name__}): {e}")
+        logger.error(f"비동기 LLM 호출 실패 ({type(e).__name__}): {_short_err(e)}")
         return None
 
     try:

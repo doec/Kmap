@@ -705,13 +705,19 @@ recency_focus 판단 규칙 (매우 중요):
                 'year_week_from':  year_week_from,
                 'year_week_to':    year_week_to,
                 'target_datasets': target_datasets,
+                'extraction_failed': False,
             }
         except Exception as e:
-            self._dbg(0, f"[Debug] 키워드 파싱 오류: {e} / 원본: {result}")
+            # ★ result 가 None 인 경우(=LLM API 호출 자체가 실패, 예: 게이트웨이 503)와
+            #   JSON 파싱/형식 오류를 구분해서 로그를 남긴다. 원인 파악에 유용하다.
+            reason = "LLM API 호출 실패 (재시도 후에도 응답 없음)" if result is None else f"{e}"
+            self._dbg(0, f"[Debug] 키워드 추출 실패 → 원본 질문으로 폴백 (날짜/저자 등 추출 없이 검색): "
+                         f"{reason}" + (f" / 원본: {result}" if result is not None else ""))
             return {'keywords': query, 'author_names': '', 'date_from': None, 'date_to': None,
                     'recency_focus': False, 'year_week': None,
                     'year_week_from': None, 'year_week_to': None,
-                    'target_datasets': list(DATASETS.keys())}
+                    'target_datasets': list(DATASETS.keys()),
+                    'extraction_failed': True}
 
     def _build_return_clause(self, return_fields: list) -> str:
         base = [
@@ -1624,6 +1630,13 @@ recency_focus 판단 규칙 (매우 중요):
         year_week_from     = extracted['year_week_from']
         year_week_to       = extracted['year_week_to']
         target_datasets    = extracted['target_datasets']
+
+        # ★ 질문 분석(키워드/날짜/저자 추출) 자체가 실패했으면(LLM API 오류 등),
+        #   원본 질문 전체를 키워드로 그냥 쓰는 저품질 폴백으로 넘어간다 — 날짜/저자
+        #   필터, 데이터셋 자동 선택이 전혀 안 되므로 검색 품질이 떨어진다. 사용자가
+        #   이유 모르게 "검색이 이상하다"고 느끼지 않도록 화면에 짧게 알려준다.
+        if extracted.get('extraction_failed'):
+            yield {'type': 'status', 'text': '⚠️ 질문 분석 중 일시적 오류 — 원본 질문으로 검색합니다'}
 
         self._dbg(1, f"[Debug] 추출된 키워드: {extracted_keywords}")
         # ★ 코드→물질명 변환은 각 데이터셋 검색 단계(retrieve) 안에서 실제로 일어나고
