@@ -110,12 +110,29 @@ def _protect_emphasis_chars_in_math(text: str) -> str:
     return ''.join(parts)
 
 
+# ★ 수식과 무관하게, "글자/숫자 사이에 낀 언더스코어"(예: 코드/치수 표기
+#   "600_320_280_320")도 markdown2 가 강조(이탤릭) 마커로 잘못 해석해 언더스코어가
+#   사라지고 글자가 붙어버리는 문제가 있다(CommonMark 표준은 이런 "intraword"
+#   언더스코어를 강조로 보지 않아야 하는데, markdown2 는 이 규칙을 지키지 않음).
+#   수식 구간 밖의 일반 텍스트에도 같은 HTML 문자 참조 보호를 적용한다.
+_INTRAWORD_USCORE_RE = re.compile(r'(?<=[A-Za-z0-9])_(?=[A-Za-z0-9])')
+
+
+def _protect_intraword_underscore(text: str) -> str:
+    parts = _ALREADY_DELIM_RE.split(text)
+    for i, part in enumerate(parts):
+        if i % 2 == 0:   # 짝수 인덱스 = 수식이 아닌 일반 텍스트 구간
+            parts[i] = _INTRAWORD_USCORE_RE.sub('&#95;', part)
+    return ''.join(parts)
+
+
 def _convert_math_delims(text: str) -> str:
     text = _neutralize_stray_delims(text)
     text = _MATH_DISPLAY_RE.sub(lambda m: f'\\[{m.group(1)}\\]', text)
     text = _MATH_INLINE_RE.sub(lambda m: f'\\({m.group(1)}\\)', text)
     text = _wrap_bare_latex(text)
     text = _protect_emphasis_chars_in_math(text)
+    text = _protect_intraword_underscore(text)
     return text
 
 
