@@ -69,6 +69,11 @@ def _convert_math_delims(text: str) -> str:
     return text
 
 
+# CommonMark 가 백슬래시-이스케이프로 인식하는 ASCII 문장부호 전체 집합.
+# (백슬래시 뒤에 이 중 하나가 오면 마크다운이 백슬래시를 소비해버린다.)
+_MD_ESCAPABLE_PUNCT_RE = re.compile(r'\\(?=[!-/:-@\[-`{-~])')
+
+
 def _linkify(text: str) -> str:
     """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다. (URL에 붙은 ** 제거)"""
     if not text:
@@ -78,6 +83,17 @@ def _linkify(text: str) -> str:
     text = _DOI_RE.sub(
         lambda m: f'[{m.group(1)}](https://doi.org/{m.group(2)})', text
     )
+    # ★ 마크다운(CommonMark)은 "백슬래시+ASCII 문장부호"(\(, \), \[, \] 등)를 이스케이프로
+    #   해석해 렌더링 시 백슬래시를 소비해버린다. 방금 위에서 MathJax용으로 넣은
+    #   \(...\) / \[...\] 구분자가 정확히 이 패턴이라, ui.markdown() 을 거치면
+    #   백슬래시가 사라지고 MathJax 는 구분자를 전혀 못 보게 된다(반면 \text 처럼
+    #   backslash+글자는 마크다운 이스케이프 대상이 아니라서 그대로 살아남는다 —
+    #   그래서 "\text{...}는 보이는데 감싸는 \( \) 만 사라지는" 증상이 나타났다).
+    #   "백슬래시+문장부호" 조합만 두 배로 늘리면, 마크다운의 "\\"(백슬래시 자체의
+    #   이스케이프) 규칙에 의해 정확히 하나만 남아 원래 의도한 단일 백슬래시가 보존된다.
+    #   (backslash+글자 조합은 애초에 이스케이프 대상이 아니라 건드리지 않아도 안전 —
+    #   범위를 문장부호로 좁혀서 답변에 코드블록이 있어도 그 안의 백슬래시는 그대로 둔다.)
+    text = _MD_ESCAPABLE_PUNCT_RE.sub(r'\\\\', text)
     return text
 
 # ── module-level singleton for graph visualization ────────────────────────────────────────────
