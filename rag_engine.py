@@ -1585,6 +1585,12 @@ recency_focus 판단 규칙 (매우 중요):
         target_datasets    = extracted['target_datasets']
 
         self._dbg(1, f"[Debug] 추출된 키워드: {extracted_keywords}")
+        # ★ 코드→물질명 변환은 각 데이터셋 검색 단계(retrieve) 안에서 실제로 일어나고
+        #   그 상세 로그는 레벨 2 에서만 보이는데, "코드로 검색해도 물질명으로 정상
+        #   변환되는지"를 빠르게 확인할 수 있도록 레벨 1 에서도 변환 결과를 보여준다.
+        _norm_kw_preview = _normalize_query(extracted_keywords)
+        if _norm_kw_preview != extracted_keywords:
+            self._dbg(1, f"[Debug] 코드→물질명 변환: {extracted_keywords} → {_norm_kw_preview}")
         self._dbg(1, f"[Debug] 저자명(D채널 전용): {author_names or '(없음)'}")
         week_disp = (f"{year_week_from}~{year_week_to}"
                      if (year_week_from or year_week_to) else year_week)
