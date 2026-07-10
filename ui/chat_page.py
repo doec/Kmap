@@ -159,10 +159,25 @@ def _apply_outside_code(text: str, fn) -> str:
     return ''.join(parts)
 
 
+# ★ LLM 이 답변 어딘가에 짝이 안 맞는(홀수 개) ``` 를 흘리면, 마크다운은 그 지점부터
+#   (다음 ``` 또는 문서 끝까지) 전부 "코드 블록"으로 인식해버린다 — 그 뒤에 표가
+#   있으면 표까지 통째로 그냥 텍스트로 렌더링된다. 스트리밍 중에는 문제의 ```가
+#   아직 도착하기 전이라 표가 정상으로 보이다가, 스트림이 끝나고 전체 텍스트를
+#   다시 그릴 때 비로소 이 증상이 나타난다. ``` 개수가 홀수면 마지막 하나를
+#   무력화해(짝을 맞춰) 이후 내용이 통째로 코드 블록에 먹히지 않게 방지한다.
+def _fix_unbalanced_code_fence(text: str) -> str:
+    if text.count('```') % 2 == 1:
+        idx = text.rindex('```')
+        text = text[:idx] + '​```' + text[idx + 3:]  # 폭 없는 문자를 끼워 펜스 무력화
+    return text
+
+
 def _linkify(text: str) -> str:
     """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다. (URL에 붙은 ** 제거)"""
     if not text:
         return text
+
+    text = _fix_unbalanced_code_fence(text)
 
     def _process(t: str) -> str:
         t = _convert_math_delims(t)
