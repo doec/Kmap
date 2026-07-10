@@ -509,7 +509,8 @@ class GraphRAG:
   "year_week": "YYYY-WNN 또는 null",
   "year_week_from": "YYYY-WNN 또는 null",
   "year_week_to": "YYYY-WNN 또는 null",
-  "full_content": true 또는 false
+  "full_content": true 또는 false,
+  "prefer_normalized": true 또는 false
 }}
 
 full_content 판단 규칙:
@@ -517,6 +518,13 @@ full_content 판단 규칙:
   다 보여줘" 처럼 문서 본문을 자르거나 요약하지 말고 있는 그대로 전부 보여달라는
   의도면 → true.
 - 그 외(일반적인 질문/요약 요청)는 → false.
+
+prefer_normalized 판단 규칙:
+- ReportsDB/Confluence 원본 문서에는 사내 코드(예: BD30) 그대로 적힌 버전과, 코드를
+  물질명(예: HfO2)으로 변환한 버전이 둘 다 있습니다. 기본은 코드 원본을 우선
+  보여주지만, "물질명으로 변환된 내용으로 보여줘", "물질명 기준으로 정리해줘",
+  "코드 말고 물질명으로" 처럼 물질명 변환본을 명시적으로 원하는 질문이면 → true.
+- 그 외(특별한 언급 없음, 또는 반대로 "코드 그대로/원본으로 보여줘")는 → false.
 
 author_names 판단 규칙 (매우 중요):
 - 질문이 "그 사람이 쓴 논문/보고서", "이창수가 작성한 문서", "Tao Li 최근 논문" 처럼
@@ -713,6 +721,7 @@ recency_focus 판단 규칙 (매우 중요):
                 'year_week_to':    year_week_to,
                 'target_datasets': target_datasets,
                 'full_content':    bool(parsed.get('full_content', False)),
+                'prefer_normalized': bool(parsed.get('prefer_normalized', False)),
                 'extraction_failed': False,
             }
         except Exception as e:
@@ -726,6 +735,7 @@ recency_focus 판단 규칙 (매우 중요):
                     'year_week_from': None, 'year_week_to': None,
                     'target_datasets': list(DATASETS.keys()),
                     'full_content': False,
+                    'prefer_normalized': False,
                     'extraction_failed': True}
 
     def _build_return_clause(self, return_fields: list) -> str:
@@ -1355,7 +1365,8 @@ recency_focus 판단 규칙 (매우 중요):
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict,
                          recency_focus: bool = False,
-                         full_content: bool = False) -> str:
+                         full_content: bool = False,
+                         prefer_normalized: bool = False) -> str:
         """
         doc_id 집합을 받아 Paper/Report 메타 노드에서 제목·본문·출처를 조회하고,
         LLM 컨텍스트에 넣을 "관련 문서" 섹션 문자열로 만든다.
@@ -1388,8 +1399,16 @@ recency_focus 판단 규칙 (매우 중요):
         #   목적)에는 반대로 content_norm 을 우선해 어휘를 통일한다.
         # ★ journal 은 Paper 노드 전용, year_week 는 Report/Confl_doc 노드 전용 필드
         #   (다른 데이터셋엔 없으면 null 반환되어 meta_bits 에서 자연히 제외된다).
-        body_expr = (f"COALESCE(m.content, m.{body_field})" if full_content
-                     else f"COALESCE(m.{body_field}, m.content)")
+        # ★ prefer_normalized(물질명 변환본을 명시적으로 요청)가 true 면 full_content
+        #   여부와 무관하게 항상 content_norm(물질명)을 우선한다 — "물질명으로 변환된
+        #   내용으로 보여줘" 요청은 원문 전체 요청(full_content)과 함께 와도 물질명이
+        #   우선이어야 하기 때문.
+        if prefer_normalized:
+            body_expr = f"COALESCE(m.{body_field}, m.content)"
+        elif full_content:
+            body_expr = f"COALESCE(m.content, m.{body_field})"
+        else:
+            body_expr = f"COALESCE(m.{body_field}, m.content)"
         order_clause = "ORDER BY m.date DESC" if recency_focus else ""
         query_str = f"""
             MATCH (m:{doc_label})
@@ -1497,7 +1516,8 @@ recency_focus 판단 규칙 (매우 중요):
                  year_week_from: str = None,
                  year_week_to: str = None,
                  author_names: str = None,
-                 full_content: bool = False) -> str:
+                 full_content: bool = False,
+                 prefer_normalized: bool = False) -> str:
         cfg          = DATASETS.get(dataset, list(DATASETS.values())[0])
         search_mode  = mode or DEFAULT_SEARCH_MODE or cfg.get('default_mode', 'text')
         hops         = cfg.get('search_hops') or DEFAULT_SEARCH_HOPS
@@ -1615,7 +1635,8 @@ recency_focus 판단 규칙 (매우 중요):
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
               f"E(주차)={len(ids_e)} → 합집합 {len(doc_ids)}")
 
-        docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus, full_content=full_content)
+        docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus,
+                                          full_content=full_content, prefer_normalized=prefer_normalized)
         if doc_ids and not docs_ctx:
             self._dbg(0, f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
                   f"(doc_id 불일치 또는 doc_label/속성 확인 필요). 예시 id: {list(doc_ids)[:3]}")
@@ -1664,6 +1685,7 @@ recency_focus 판단 규칙 (매우 중요):
         year_week_to       = extracted['year_week_to']
         target_datasets    = extracted['target_datasets']
         full_content       = extracted['full_content']
+        prefer_normalized  = extracted['prefer_normalized']
 
         # ★ 질문 분석(키워드/날짜/저자 추출) 자체가 실패했으면(LLM API 오류 등),
         #   원본 질문 전체를 키워드로 그냥 쓰는 저품질 폴백으로 넘어간다 — 날짜/저자
@@ -1682,6 +1704,8 @@ recency_focus 판단 규칙 (매우 중요):
         self._dbg(1, f"[Debug] 저자명(D채널 전용): {author_names or '(없음)'}")
         if full_content:
             self._dbg(1, "[Debug] 전체 내용 요청 감지 → 문서 본문 잘라내지 않음")
+        if prefer_normalized:
+            self._dbg(1, "[Debug] 물질명 변환본 우선 요청 감지 → content_norm 우선 사용")
         week_disp = (f"{year_week_from}~{year_week_to}"
                      if (year_week_from or year_week_to) else year_week)
         self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
@@ -1721,7 +1745,7 @@ recency_focus 판단 규칙 (매우 중요):
                         self.retrieve,
                         extracted_keywords, query, ds, mode,
                         DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
-                        year_week_from, year_week_to, author_names, full_content
+                        year_week_from, year_week_to, author_names, full_content, prefer_normalized
                     )
                     for ds in search_targets
                 }
