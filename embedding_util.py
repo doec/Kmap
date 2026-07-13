@@ -21,7 +21,18 @@ def node_text(name: str, node_type: str) -> str:
     return f"{name} ({node_type})"
 
 
-def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
+def get_embeddings_batch(texts: list[str]) -> list[list[float] | None]:
+    """
+    각 텍스트에 대응하는 임베딩 벡터 리스트를 반환한다.
+
+    ★ API 호출이 실패한 배치는 예전엔 [0.0]*EMBED_DIM(0벡터)로 채워 넣었는데,
+    이 0벡터를 그대로 Neo4j 벡터 검색(db.index.vector.queryNodes)에 넘기면
+    "Vector must only contain finite values, and have positive and finite
+    l2-norm" 에러가 발생한다(0벡터는 노름이 0이라 코사인 유사도 계산이 불가능).
+    즉 "API 실패를 조용히 넘기려던" 폴백이 오히려 더 알아보기 힘든 2차 에러를
+    유발했다. 이제 실패한 항목은 None 으로 표시해 호출부가 "임베딩을 못 구했다"는
+    걸 명확히 알고 그 항목의 벡터 검색을 건너뛸 수 있게 한다.
+    """
     if not texts:
         return []
     all_embeddings = []
@@ -41,10 +52,11 @@ def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
             all_embeddings.extend([item['embedding'] for item in data['data']])
         except Exception as e:
             print(f"임베딩 오류 (batch {i//EMBED_BATCH_SIZE + 1}): {e}")
-            all_embeddings.extend([[0.0] * EMBED_DIM] * len(batch))
+            all_embeddings.extend([None] * len(batch))
     return all_embeddings
 
 
-def get_embedding(text: str) -> list[float]:
+def get_embedding(text: str) -> list[float] | None:
+    """임베딩 벡터를 반환한다. API 호출 실패 시 None (호출부가 검색을 건너뛰어야 함)."""
     result = get_embeddings_batch([text])
-    return result[0] if result else [0.0] * EMBED_DIM
+    return result[0] if result else None

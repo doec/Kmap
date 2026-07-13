@@ -890,6 +890,12 @@ recency_focus 판단 규칙 (매우 중요):
 
         # 1) 질문 텍스트를 임베딩(1024차원 벡터)으로 변환
         q_emb = get_embedding(query_text)
+        if q_emb is None:
+            # ★ 임베딩 API 호출 실패(예: 게이트웨이 502). 0벡터로 검색을 강행하면
+            #   Neo4j 가 "노름이 0인 벡터" 라며 에러를 던지므로, 아예 벡터 검색을
+            #   건너뛴다 — text 검색 등 다른 채널은 영향받지 않고 계속 동작한다.
+            self._dbg(0, "[Debug] 임베딩 실패로 엔티티 벡터 검색 건너뜀")
+            return []
 
         # 2) 벡터 검색 후 추가로 적용할 필터 조건들을 모은다.
         #    filter_parts 는 관계(r) 속성에 대한 조건이고,
@@ -1154,6 +1160,9 @@ recency_focus 판단 규칙 (매우 중요):
             return []
 
         q_emb = get_embedding(query_text)
+        if q_emb is None:
+            self._dbg(0, "[Debug] 임베딩 실패로 문서 벡터 검색 건너뜀")
+            return []
         # ★ 기간(date/주차) 필터: 없으면 "2026년 관련 보고서" 처럼 기간이 지정된
         #   질문에서도 벡터 유사도만 보고 연도 제한이 전혀 안 걸려 다른 연도 문서까지
         #   섞여 나오는 문제가 있었다. date_as_week 데이터셋은 year_week 범위로 거른다.
