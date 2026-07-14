@@ -1976,8 +1976,12 @@ recency_focus 판단 규칙 (매우 중요):
         _t_answer = time.monotonic() - _t_answer_start
 
         _t_total = time.monotonic() - _t_extract_start
+        # ★ _t_first_chunk 는 첫 청크가 도착해야만 채워지는데, LLM 호출 자체가
+        #   실패해 청크가 하나도 안 온 경우(예: 게이트웨이 오류) None 으로 남아
+        #   ":.2f" 포맷팅이 TypeError 로 죽는 문제가 있었다. 방어적으로 처리한다.
+        first_chunk_disp = f"{_t_first_chunk:.2f}초" if _t_first_chunk is not None else "응답 없음"
         self._dbg(1, f"[Debug] ⏱ 답변 생성 소요 시간: {_t_answer:.2f}초 "
-                     f"(첫 응답까지 {_t_first_chunk:.2f}초, 모델: {answer_model_name})")
+                     f"(첫 응답까지 {first_chunk_disp}, 모델: {answer_model_name})")
         self._dbg(1, f"[Debug] ⏱ 전체 소요 시간: {_t_total:.2f}초 "
                      f"(질문 분석 {_t_extract:.2f}초 + 검색 {_t_retrieve:.2f}초 + 답변 생성 {_t_answer:.2f}초)")
 
