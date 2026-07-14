@@ -4,10 +4,25 @@ from pathlib import Path
 
 from nicegui import ui, app
 from fastapi.responses import HTMLResponse
+from starlette.requests import Request
 
 from ui.chat_page import build_chat_page, _neo4j_viz
+from access_log import log_access, client_ip
 
 _ROOT = Path(__file__).parent
+
+
+# ★ 접속 로그(IP/시간): 모든 HTTP 요청에 대해 logs/access.log 에 기록한다.
+#   정적 파일(js/css/이미지 등) 요청까지 다 찍으면 로그가 지나치게 많아지므로,
+#   페이지 이동/API 성격의 요청만 남기고 정적 자산 확장자는 걸러낸다.
+_STATIC_EXT = ('.js', '.css', '.png', '.jpg', '.svg', '.ico', '.woff', '.woff2', '.map')
+
+
+@app.middleware('http')
+async def _log_requests(request: Request, call_next):
+    if not request.url.path.endswith(_STATIC_EXT):
+        log_access(client_ip(request), request.method, request.url.path)
+    return await call_next(request)
 
 
 @app.get('/graph/{graph_id}')

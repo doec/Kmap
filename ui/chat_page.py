@@ -5,9 +5,11 @@ import os
 import re
 
 from nicegui import ui
+from starlette.requests import Request
 
 from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, CONFLUENCE_DATASET, DATASETS
 from retriever.neo4j_retriever import Neo4jRetriever
+from access_log import client_ip as _client_ip, log_search
 
 # ── 서브그래프 표시 여부 판단용: 답변에 엔티티 이름이 "언급됐는지" 확인할 때 LaTeX
 #   표기(\text{SrTiO}_3 등)와 공백/대소문자 차이 때문에 완전히 같은 문자열로는
@@ -303,9 +305,13 @@ class _PageState:
         self.messages: list[dict] = []
 
 
-def build_chat_page():
+def build_chat_page(request: Request = None):
     state = _PageState()
     rag   = GraphRAG()
+
+    # ★ 접속한 사용자의 IP — 검색 기록 로그(누가 무엇을 검색했는지)에 남기기 위함.
+    #   NiceGUI 가 @ui.page 함수에 request 를 자동으로 주입해준다.
+    session_ip = _client_ip(request) if request is not None else 'unknown'
 
     # capture client at page-build time — this is the only moment slot context is guaranteed
     from nicegui import context as _ctx
@@ -781,6 +787,9 @@ def build_chat_page():
             # ★ "전체"만 선택돼 있으면 rag 쪽에는 "All" 문자열로(자동 데이터셋 선택),
             #   특정 데이터셋을 하나 이상 골랐으면 그 key 들의 리스트로 넘긴다.
             current_dataset = "All" if "All" in state.dataset else list(state.dataset)
+
+            # ★ 검색 기록 로그: 누가(IP) 언제 무엇을 검색했는지 logs/search.log 에 남긴다.
+            log_search(session_ip, _dataset_display(current_dataset), state.search_mode, query)
             current_mode    = state.search_mode
 
             # ── create conversation if first message ────────────────────────────────────────────────
