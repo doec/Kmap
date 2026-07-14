@@ -224,6 +224,24 @@ _DATASET_TABS = [
     (label, key) for label, key in _DATASET_TABS
     if key in ("All", "ExperimentsDB") or key in DATASETS
 ]
+_DATASET_LABEL_BY_KEY = {key: label for label, key in _DATASET_TABS}
+
+
+def _dataset_display(ds) -> str:
+    """뱃지에 표시할 텍스트. ds 는 "All" 문자열이거나 선택된 데이터셋 key들의 set/list."""
+    if ds == "All" or not ds:
+        return "전체"
+    keys = [ds] if isinstance(ds, str) else list(ds)
+    return " + ".join(_DATASET_LABEL_BY_KEY.get(k, k) for k in keys)
+
+
+def _dataset_chip_color(ds) -> str:
+    if ds == "All" or not ds:
+        return "grey"
+    keys = [ds] if isinstance(ds, str) else list(ds)
+    if len(keys) == 1:
+        return _DATASET_CHIP_COLOR.get(keys[0], "grey")
+    return "indigo"   # 여러 데이터셋을 함께 선택한 경우
 
 # ── search mode options ───────────────────────────────────────────────────────────────────────────────────
 _MODE_OPTIONS = [
@@ -273,7 +291,11 @@ def _add_subgraph_widget(graph_id: str, page_client) -> None:
 
 class _PageState:
     def __init__(self):
-        self.dataset: str       = "All"
+        # ★ 여러 데이터셋을 동시에 선택할 수 있도록 set 으로 관리한다.
+        #   {"All"} 이면 "전체"가 선택된 상태(= LLM 이 자동으로 데이터셋을 고름).
+        #   특정 데이터셋을 하나 이상 고르면 "All"은 자동으로 빠지고, 고른
+        #   데이터셋들만 검색 대상이 된다.
+        self.dataset: set[str]  = {"All"}
         self.search_mode: str   = "hybrid"
         self.use_2hop: bool     = True   # TODO: wire to rag_engine when per-session hops are supported
         self.conversations: list[dict] = []   # {id, title, messages}
@@ -455,13 +477,30 @@ def build_chat_page():
 
             dataset_btn_refs: dict[str, ui.button] = {}
 
-            def _on_dataset(key: str):
-                state.dataset = key
+            def _refresh_dataset_btn_styles():
                 for k, btn in dataset_btn_refs.items():
-                    if k == key:
+                    if k in state.dataset:
                         btn.classes(remove='text-white/60 hover:text-white', add='bg-white/20 text-white')
                     else:
                         btn.classes(remove='bg-white/20 text-white', add='text-white/60 hover:text-white')
+
+            def _on_dataset(key: str):
+                # ★ 중복 선택 지원: "전체"를 누르면 단독 선택으로 리셋되고,
+                #   개별 데이터셋은 토글(추가/해제)되며 서로 중복 선택 가능하다.
+                #   개별 데이터셋을 하나라도 고르면 "전체"는 자동으로 빠지고,
+                #   전부 해제되면 다시 "전체"로 되돌아간다(선택 없음 상태 방지).
+                if key == "All":
+                    state.dataset = {"All"}
+                else:
+                    if "All" in state.dataset:
+                        state.dataset = set()
+                    if key in state.dataset:
+                        state.dataset.discard(key)
+                    else:
+                        state.dataset.add(key)
+                    if not state.dataset:
+                        state.dataset = {"All"}
+                _refresh_dataset_btn_styles()
 
             for label, key in _DATASET_TABS:
                 disabled = (key == "ExperimentsDB")
@@ -476,7 +515,7 @@ def build_chat_page():
                     btn.classes('text-white/60 hover:text-white')
                 if disabled:
                     btn.disable()
-                    btn.tooltip('준비 중 (Qdrant RAG 2단계)')
+                    btn.tooltip('준비중')
                 dataset_btn_refs[key] = btn
 
             ui.element('div').style('flex:1;')
@@ -712,9 +751,8 @@ def build_chat_page():
             graph_id = msg.get('graph_id')
 
             if role == 'user':
-                chip_color = _DATASET_CHIP_COLOR.get(ds, 'grey')
                 with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px; width:100%;'):
-                    ui.badge(ds, color=chip_color).classes('text-xs')
+                    ui.badge(_dataset_display(ds), color=_dataset_chip_color(ds)).classes('text-xs')
                     with ui.element('div').classes(
                         'user-bubble rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white'
                     ).style('max-width:80%;'):
@@ -740,7 +778,9 @@ def build_chat_page():
             input_box.value = ''
             send_btn.disable()
 
-            current_dataset = state.dataset
+            # ★ "전체"만 선택돼 있으면 rag 쪽에는 "All" 문자열로(자동 데이터셋 선택),
+            #   특정 데이터셋을 하나 이상 골랐으면 그 key 들의 리스트로 넘긴다.
+            current_dataset = "All" if "All" in state.dataset else list(state.dataset)
             current_mode    = state.search_mode
 
             # ── create conversation if first message ────────────────────────────────────────────────
@@ -755,13 +795,12 @@ def build_chat_page():
                 _refresh_conv_list()
 
             # ── user bubble ─────────────────────────────────────────────────────────────────────────────────────
-            chip_color = _DATASET_CHIP_COLOR.get(current_dataset, 'grey')
             user_msg = {'role': 'user', 'content': query, 'dataset': current_dataset}
             state.messages.append(user_msg)
 
             with chat_container:
                 with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px; width:100%;'):
-                    ui.badge(current_dataset, color=chip_color).classes('text-xs')
+                    ui.badge(_dataset_display(current_dataset), color=_dataset_chip_color(current_dataset)).classes('text-xs')
                     with ui.element('div').classes(
                         'user-bubble rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white'
                     ).style('max-width:80%;'):

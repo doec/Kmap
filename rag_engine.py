@@ -1662,7 +1662,7 @@ recency_focus 판단 규칙 (매우 중요):
             return _NO_RESULT
         return "\n\n".join(parts)
 
-    def answer_stream(self, query: str, dataset: str = None, mode: str = None):
+    def answer_stream(self, query: str, dataset: str | list[str] | None = None, mode: str = None):
         """
         답변을 스트리밍으로 생성하는 제너레이터.
 
@@ -1731,8 +1731,14 @@ recency_focus 판단 규칙 (매우 중요):
             results = {}
             _t_retrieve = 0.0
         else:
-            if dataset and dataset != 'All' and dataset in DATASETS:
-                # 사용자가 특정 탭을 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
+            # ★ dataset 은 "All"(또는 None), 단일 데이터셋명 문자열, 또는 여러 개를
+            #   동시에 고른 경우 리스트/집합일 수 있다(사이드바 다중 선택 지원).
+            if isinstance(dataset, (list, tuple, set)):
+                selected = [d for d in dataset if d in DATASETS]
+                # 유효한 선택이 있으면 그것만, 없으면 안전하게 LLM 자동 선택으로 폴백
+                search_targets = selected if selected else target_datasets
+            elif dataset and dataset != 'All' and dataset in DATASETS:
+                # 사용자가 특정 탭 하나만 명시적으로 선택한 경우 — LLM 판단과 무관하게 그 탭만 검색
                 search_targets = [dataset]
             else:
                 # "전체" 탭일 때만 LLM이 판단한 관련 데이터셋으로 검색 범위를 좁힌다.
