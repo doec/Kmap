@@ -1373,6 +1373,49 @@ recency_focus 판단 규칙 (매우 중요):
             self._dbg(0, f"[Debug] 주차 검색 실패: {e}")
             return []
 
+    # ── F 기능: 날짜 범위로 문서 열거 (주차 관리가 아닌 데이터셋용, 예: PapersDB) ──────
+    def _doc_daterange_retrieve(self, cfg: dict,
+                                date_from: str = None, date_to: str = None) -> list[str]:
+        """
+        m.date 로 관리되는 데이터셋(PapersDB 등)에서, 날짜 범위에 속하는 문서를
+        relevance 컷 없이 전부 열거한다. _doc_week_retrieve 의 "날짜(date) 버전".
+
+        "2026년 6월 등록된 논문을 보여줘" 같은 질문은 열거형인데, B(벡터)/C(FULLTEXT)는
+        관련도 상위 5건으로 제한되어 있어 "6월"처럼 흔한 키워드로는 대부분 걸러지고
+        소수만 나오는 문제가 있었다. 이 채널은 그 기간에 해당하는 문서를 관련도와
+        무관하게 모두 담아준다(컨텍스트 폭주 방지를 위해 상한만 둠).
+
+        ★ date_as_week 데이터셋(ReportsDB/Confluence)은 _doc_week_retrieve(E채널)가
+          이미 같은 역할을 year_week 기준으로 담당하므로 여기서는 제외한다.
+        """
+        doc_label = cfg.get('doc_label')
+        if not doc_label or cfg.get('date_as_week') or not (date_from or date_to):
+            return []
+
+        conds = []
+        params = {'limit': WEEK_RANGE_LIMIT}
+        if date_from:
+            conds.append("m.date >= $date_from")
+            params['date_from'] = date_from
+        if date_to:
+            conds.append("m.date <= $date_to")
+            params['date_to'] = date_to
+
+        query_str = f"""
+            MATCH (m:{doc_label})
+            WHERE m.date IS NOT NULL AND {" AND ".join(conds)}
+            RETURN m.doc_id AS doc_id
+            ORDER BY m.date DESC
+            LIMIT $limit
+        """
+        try:
+            with self.driver.session() as session:
+                rows = [dict(r) for r in session.run(query_str, **params)]
+            return [r['doc_id'] for r in rows if r.get('doc_id')]
+        except Exception as e:
+            self._dbg(0, f"[Debug] 날짜 범위 열거 검색 실패: {e}")
+            return []
+
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict,
                          recency_focus: bool = False,
@@ -1641,10 +1684,11 @@ recency_focus 판단 규칙 (매우 중요):
         #   문서가 대량으로 섞여 들어가는 문제(컨텍스트 폭주 → 응답 지연)가 있었다.
         ids_d = set(self._doc_author_retrieve(author_names, cfg, date_from=date_from, date_to=date_to, yw_from=year_week_from, yw_to=year_week_to)) if author_names else set()  # D: 저자명 직접 검색 (모든 모드)
         ids_e = set(self._doc_week_retrieve(year_week, cfg, yw_from=year_week_from, yw_to=year_week_to))  # E: 주차 정확/범위 매칭 (모든 모드)
-        doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e
+        ids_f = set(self._doc_daterange_retrieve(cfg, date_from=date_from, date_to=date_to))  # F: 날짜 범위 열거 (date_as_week 아닌 데이터셋, 모든 모드)
+        doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e | ids_f
         self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
-              f"E(주차)={len(ids_e)} → 합집합 {len(doc_ids)}")
+              f"E(주차)={len(ids_e)} F(날짜범위)={len(ids_f)} → 합집합 {len(doc_ids)}")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus,
                                           full_content=full_content, prefer_normalized=prefer_normalized)
