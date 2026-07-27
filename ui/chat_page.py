@@ -713,11 +713,15 @@ def build_chat_page(request: Request = None):
                         ui.textarea(placeholder='질문을 입력하세요')
                         .classes('w-full text-sm')
                         .style('font-size:14px;')
+                        # ★ 중앙 화면(처음)에서는 2줄 정도 높이(min-height:44px)로 시작한다.
+                        #   하단으로 이동하면 _show_chat_layout() 에서 1줄 높이로 줄이고,
+                        #   실제 줄바꿈이 들어가면 autogrow 가 다시 키워준다.
                         .props('borderless dense autogrow input-style="min-height:44px"')
-                        # 줄바꿈 방지(preventDefault)는 아래 .on('keydown.enter.exact.prevent')
-                        # 에서 처리한다 (NiceGUI 가 클라이언트 측 리스너를 올바른 엘리먼트에
-                        # 직접 붙여주고 .prevent 도 브라우저에서 즉시 적용되므로, .props 로
-                        # @keydown 을 넣는 방식보다 안정적으로 동작한다).
+                        # ★ Shift 없는 순수 Enter 의 줄바꿈 기본동작만 막는다. Vue 템플릿에
+                        #   정적으로 붙는 속성이라(=엘리먼트 생성과 동시에 적용) 렌더링 이후에
+                        #   JS 를 주입하는 방식과 달리 타이밍 경쟁이 없다. Shift+Enter 는
+                        #   $event.shiftKey 가 true 라 이 조건에 안 걸려 자연스럽게 줄바꿈된다.
+                        .props('''@keydown.enter="$event.shiftKey || $event.preventDefault()"''')
                     )
                     # ── 하단 툴바: 왼쪽에 모델 선택, 오른쪽에 전송 버튼 ──────────────────
                     with ui.element('div').style(
@@ -752,6 +756,9 @@ def build_chat_page(request: Request = None):
                 if 'moved' not in _layout_state:
                     input_block.move(bottom_bar)
                     _layout_state['moved'] = True
+                # ★ 하단으로 옮긴 뒤에는 처음에 1줄만 보이도록 줄인다. 실제 줄바꿈이
+                #   들어가면 autogrow 가 다시 키워준다 (중앙 화면일 땐 2줄로 큼직하게).
+                input_box.props('input-style="min-height:24px"')
                 center_wrap.style('display:none')
                 chat_layout.style('display:flex')
 
@@ -759,6 +766,7 @@ def build_chat_page(request: Request = None):
                 """새 대화 시작 시: 하단 입력창 → 중앙 화면으로 복귀."""
                 input_block.move(center_input_slot)
                 _layout_state.pop('moved', None)
+                input_box.props('input-style="min-height:44px"')
                 chat_layout.style('display:none')
                 center_wrap.style('display:flex')
 
@@ -1053,13 +1061,12 @@ def build_chat_page(request: Request = None):
             send_btn.enable()
 
         async def _on_enter(e):
-            await on_send_message()
+            # ★ 줄바꿈 방지(preventDefault)는 위 input_box 의 정적 @keydown 속성이
+            #   이미 처리했으므로, 여기서는 "보내기" 만 담당한다. Shift+Enter 는
+            #   그 속성 조건에 안 걸려 줄바꿈으로 통과되므로, 여기서도 shiftKey 면
+            #   전송하지 않도록 한 번 더 확인한다.
+            if not e.args.get('shiftKey'):
+                await on_send_message()
 
         send_btn.on('click', on_send_message)
-        # ★ 단일 바인딩으로 "줄바꿈 방지 + 전송" 을 모두 처리한다.
-        #   - .exact  : Shift/Ctrl/Alt/Meta 등 보조키 없이 순수 Enter 일 때만 발동
-        #               (→ Shift+Enter 는 자연스럽게 줄바꿈으로 통과)
-        #   - .prevent: NiceGUI 가 클라이언트 리스너에 preventDefault 를 걸어주므로,
-        #               서버 왕복 전에 브라우저에서 즉시 줄바꿈 기본동작을 막는다
-        #               (→ 첫 질문에서 줄바꿈이 새던 타이밍 문제 해소)
-        input_box.on('keydown.enter.exact.prevent', _on_enter)
+        input_box.on('keydown.enter', _on_enter)
