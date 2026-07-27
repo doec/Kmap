@@ -421,6 +421,30 @@ def build_chat_page(request: Request = None):
             color: #1e293b !important;          /* slate-800 (진한 회색) */
             font-weight: 500 !important;
         }
+        /* 제목 앞 원형 아이콘 — 작고 옅게, 글자와 세로 중앙 정렬 */
+        .conv-title .q-icon {
+            font-size: 9px !important;
+            margin-right: 7px !important;
+            color: #94a3b8;
+        }
+        .conv-title.conv-active .q-icon { color: #475569; }
+        /* 버튼 내부 컨텐츠를 왼쪽 정렬로 고정해 아이콘·글자 시작 위치가 줄마다 동일하게 */
+        .conv-title .q-btn__content { justify-content: flex-start !important; flex-wrap: nowrap !important; }
+
+        /* 즐겨찾기 별 — 등록된 건 항상 보이고, 아닌 건 마우스 올릴 때만 보인다
+           (모든 줄에 빈 별이 항상 떠 있으면 목록이 산만해지므로) */
+        .conv-star {
+            width: 18px; height: 18px;
+            min-width: 18px; min-height: 18px;
+            padding: 0 !important;
+            color: #cbd5e1 !important;
+            opacity: 0;
+            transition: opacity 0.15s, color 0.12s;
+        }
+        .conv-star .q-icon { font-size: 14px !important; }
+        .conv-star.conv-star-on { opacity: 1; color: #f59e0b !important; }   /* amber-500 */
+        .conv-row:hover .conv-star { opacity: 1; }
+        .conv-star:hover { color: #f59e0b !important; }
 
         /* '＋ 새 대화': 대화 목록과 구분되도록 흰 배경 + 테두리의 버튼 형태로 */
         .new-chat-btn {
@@ -439,6 +463,9 @@ def build_chat_page(request: Request = None):
             border-color: #cbd5e1 !important;
             color: #0f172a !important;
         }
+        /* 대화 목록 항목과 아이콘·글자 시작 위치를 맞춘다 */
+        .new-chat-btn .q-icon { font-size: 14px !important; margin-right: 5px !important; }
+        .new-chat-btn .q-btn__content { justify-content: flex-start !important; flex-wrap: nowrap !important; }
         /* 검색 모드 버튼 (Hybrid / Vector / Text) — 회색 톤으로 통일 */
         .mode-btn {
             font-size: 12px !important;
@@ -637,7 +664,8 @@ def build_chat_page(request: Request = None):
             #   목록과는 살짝 간격을 둔다.
             with ui.element('div').style('display:flex; flex-direction:column; gap:10px; width:100%;'):
                 (
-                    ui.button('＋  새 대화', on_click=lambda: _new_conversation())
+                    # 아이콘을 icon= 으로 넣어 대화 목록 항목들과 시작 위치를 맞춘다
+                    ui.button('새 대화', icon='add', on_click=lambda: _new_conversation())
                     .props('flat dense no-caps align=left')
                     .classes('w-full truncate text-left new-chat-btn')
                     .style('min-width:0; text-transform:none;')
@@ -883,12 +911,24 @@ def build_chat_page(request: Request = None):
                             #   대화 제목의 영문이 전부 대문자로 바뀌어 버렸다. 원문 그대로 표시.
                             #   색상은 tailwind 클래스 대신 인라인으로 지정해(=Quasar 기본
                             #   스타일에 확실히 우선) 톤을 정밀하게 맞춘다.
-                            ui.button(('★ ' if is_fav else '') + title,
+                            # ★ 제목 앞 원형 아이콘: 선택된 대화는 채워진 원, 그 외는 빈 원.
+                            #   icon= 으로 넣으면 Quasar 가 아이콘/글자 정렬을 알아서 맞춰준다.
+                            ui.button(title, icon=('circle' if is_active else 'radio_button_unchecked'),
                                       on_click=lambda c=conv: _load_conversation(c))
                             .props('flat dense no-caps align=left')
                             .classes('flex-grow rounded truncate text-left conv-title'
                                      + (' conv-active' if is_active else ''))
                             .style('min-width:0; text-transform:none;')
+                        )
+                        (
+                            # ★ 즐겨찾기 별: 등록된 대화는 채워진 별, 아닌 대화는 빈 별.
+                            #   클릭으로 바로 토글할 수 있다(메뉴를 열지 않아도 됨).
+                            ui.button(icon=('star' if is_fav else 'star_border'),
+                                      on_click=lambda c=conv, f=is_fav: _toggle_favorite(c, f))
+                            .props('flat round dense size=xs')
+                            .classes('conv-star' + (' conv-star-on' if is_fav else ''))
+                            .style('flex-shrink:0;')
+                            .tooltip('즐겨찾기 해제' if is_fav else '즐겨찾기 추가')
                         )
                         with (
                             ui.button(icon='more_vert')
