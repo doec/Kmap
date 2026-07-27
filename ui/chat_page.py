@@ -515,8 +515,15 @@ def build_chat_page(request: Request = None):
         .input-card.input-card-compact .q-field__control,
         .input-card.input-card-compact .q-field__marginal { min-height: 0 !important; }
         .input-card.input-card-compact .q-field__native { padding-top: 2px !important; padding-bottom: 2px !important; }
+        /* ★ Quasar 는 입력창 아래에 힌트/에러 메시지용 공간(.q-field__bottom)을 항상
+           예약해 둔다. 우리는 힌트를 쓰지 않으므로 이 빈 공간이 그대로 "입력창과
+           모델 선택 드롭다운 사이의 불필요한 여백"으로 보였다 — 하단 배치에서 제거해
+           드롭다운이 카드 아래쪽에 자연스럽게 붙게 한다. */
+        .input-card.input-card-compact .q-textarea .q-field__bottom { display: none !important; }
         /* 카드 하단 툴바(모델 선택 + 전송 버튼)도 조금 더 붙인다 */
+        .input-card.input-card-compact .input-toolbar { margin-top: 0 !important; }
         .input-card.input-card-compact .q-select .q-field__control { min-height: 24px !important; }
+        .input-card.input-card-compact .q-select .q-field__bottom { display: none !important; }
 
         /* 인라인 수식이 본문 글자 크기와 어긋나지 않게 */
         .ai-bubble mjx-container { font-size: inherit !important; }
@@ -855,7 +862,7 @@ def build_chat_page(request: Request = None):
                         .props('''@keydown.enter="$event.shiftKey || $event.preventDefault()"''')
                     )
                     # ── 카드 하단 툴바: 왼쪽에 모델 선택, 오른쪽에 전송 버튼 ──────────────
-                    with ui.element('div').style(
+                    with ui.element('div').classes('input-toolbar').style(
                         'display:flex; align-items:center; justify-content:space-between; width:100%; margin-top:2px;'
                     ):
                         # ★ 답변 생성 모델을 채팅창에서 바로 고를 수 있게 — 사이드바의
