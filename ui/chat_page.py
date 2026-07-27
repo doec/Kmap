@@ -404,6 +404,10 @@ def build_chat_page(request: Request = None):
         /* sidebar resize handle */
         #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
 
+        /* 대화 목록: 점3개 메뉴 버튼은 해당 줄에 마우스를 올렸을 때만 보이게 */
+        .conv-row .conv-menu { opacity: 0; transition: opacity 0.15s; }
+        .conv-row:hover .conv-menu { opacity: 1; }
+
         /* 통합 입력창 카드: 포커스 시 은은하게 강조 */
         .input-card:focus-within {
             border-color: #a5b4fc !important;
@@ -569,7 +573,7 @@ def build_chat_page(request: Request = None):
                     'hover-btn'
                 ).style('color:#64748b;').tooltip('새 대화')
 
-            conv_list = ui.element('div').style('display:flex; flex-direction:column; gap:8px; width:100%;')
+            conv_list = ui.element('div').style('display:flex; flex-direction:column; gap:1px; width:100%;')
 
             ui.separator().style('border-color:#e2e8f0;')
 
@@ -795,30 +799,72 @@ def build_chat_page(request: Request = None):
                     cid   = conv['id']
                     title = conv['title']
                     is_active = cid == state.active_conv_id
-                    with ui.element('div').style(
+                    is_fav = bool(conv.get('favorite'))
+                    # ★ conv-row: 마우스를 올렸을 때만 점3개 메뉴 버튼이 나타나도록
+                    #   CSS(.conv-row:hover .conv-menu)와 짝을 이루는 클래스.
+                    with ui.element('div').classes('conv-row').style(
                         'display:flex; align-items:center; gap:2px; width:100%;'
                     ):
                         (
                             # ★ no-caps: Quasar 버튼은 기본적으로 text-transform:uppercase 라
                             #   대화 제목의 영문이 전부 대문자로 바뀌어 버렸다. 원문 그대로 표시.
-                            ui.button(title, on_click=lambda c=conv: _load_conversation(c))
+                            ui.button(('★ ' if is_fav else '') + title,
+                                      on_click=lambda c=conv: _load_conversation(c))
                             .props('flat dense no-caps align=left')
                             .classes(
-                                'flex-grow text-sm rounded px-2 py-1.5 truncate text-left hover-btn ' +
+                                'flex-grow text-sm rounded px-2 py-1 truncate text-left hover-btn ' +
                                 ('bg-indigo-100 text-indigo-800' if is_active else 'text-slate-500 hover:bg-slate-200')
                             )
                             .style('min-width:0; text-transform:none;')
                         )
-                        (
-                            ui.button(icon='close', on_click=lambda c=conv: _delete_conversation(c))
+                        with (
+                            ui.button(icon='more_vert')
                             .props('flat round dense size=xs')
-                            .classes('hover-btn')
+                            .classes('conv-menu')
                             .style(
-                                'color:#cbd5e1; flex-shrink:0; width:20px; height:20px; '
+                                'color:#94a3b8; flex-shrink:0; width:20px; height:20px; '
                                 'min-width:20px; min-height:20px; font-size:11px;'
                             )
-                            .tooltip('대화 삭제')
-                        )
+                        ):
+                            with ui.menu().props('auto-close'):
+                                ui.menu_item(
+                                    '즐겨찾기 해제' if is_fav else '즐겨찾기 추가',
+                                    on_click=lambda c=conv, f=is_fav: _toggle_favorite(c, f),
+                                ).classes('text-sm')
+                                ui.menu_item(
+                                    '제목 변경',
+                                    on_click=lambda c=conv: _rename_conversation(c),
+                                ).classes('text-sm')
+                                ui.separator()
+                                ui.menu_item(
+                                    '삭제',
+                                    on_click=lambda c=conv: _delete_conversation(c),
+                                ).classes('text-sm text-red-600')
+
+        def _toggle_favorite(conv: dict, currently_fav: bool):
+            conversation_store.set_favorite(conv['id'], user_key, not currently_fav)
+            _refresh_conv_list()
+
+        async def _rename_conversation(conv: dict):
+            with ui.dialog() as dialog, ui.card().style('min-width:300px;'):
+                ui.label('제목 변경').style('font-size:14px; font-weight:600; color:#1e293b;')
+                title_input = (
+                    ui.input(value=conv['title'])
+                    .props('outlined dense autofocus')
+                    .classes('w-full')
+                )
+                # 엔터로도 저장되도록
+                title_input.on('keydown.enter', lambda: dialog.submit(title_input.value))
+                with ui.element('div').style(
+                    'display:flex; justify-content:flex-end; gap:6px; width:100%; margin-top:8px;'
+                ):
+                    ui.button('취소', on_click=lambda: dialog.submit(None)).props('flat dense no-caps')
+                    ui.button('저장', on_click=lambda: dialog.submit(title_input.value)) \
+                        .props('unelevated dense no-caps')
+            new_title = await dialog
+            if new_title and new_title.strip():
+                conversation_store.rename_conversation(conv['id'], user_key, new_title.strip())
+                _refresh_conv_list()
 
         def _delete_conversation(conv: dict):
             conversation_store.delete_conversation(conv['id'], user_key)

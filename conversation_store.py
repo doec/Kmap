@@ -72,6 +72,14 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             )
         ''')
+        # ★ 즐겨찾기 컬럼 마이그레이션 — 이미 운영 중인 DB(이 컬럼이 없는 상태)에도
+        #   문제없이 적용되도록, 컬럼 존재 여부를 확인한 뒤에만 추가한다.
+        cols = {r['name'] for r in _conn.execute('PRAGMA table_info(conversations)')}
+        if 'favorite' not in cols:
+            _conn.execute(
+                'ALTER TABLE conversations ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0'
+            )
+
         # 사용자별 최근 대화 목록 조회를 빠르게
         _conn.execute('''
             CREATE INDEX IF NOT EXISTS idx_conv_user
@@ -122,12 +130,13 @@ def add_message(conv_id: int, role: str, content: str, dataset=None) -> None:
 def list_conversations(user_key: str, limit: int = 50) -> list[dict]:
     """해당 사용자의 최근 대화 목록 (최신순)."""
     with _lock:
-        # ★ id DESC 타이브레이커: updated_at 이 초 단위라 같은 초에 만들어진 대화들이
+        # ★ 즐겨찾기가 항상 위로 오고, 그 안에서 최신순.
+        #   id DESC 타이브레이커: updated_at 이 초 단위라 같은 초에 만들어진 대화들이
         #   동률이 되어 순서가 뒤집히는 문제가 있었다. id 가 큰 쪽이 항상 더 최근이므로
         #   2차 정렬 기준으로 넣어 순서를 확정한다.
         rows = _conn.execute(
-            'SELECT id, title, updated_at FROM conversations '
-            'WHERE user_key = ? ORDER BY updated_at DESC, id DESC LIMIT ?',
+            'SELECT id, title, updated_at, favorite FROM conversations '
+            'WHERE user_key = ? ORDER BY favorite DESC, updated_at DESC, id DESC LIMIT ?',
             (user_key, limit),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -148,6 +157,26 @@ def load_messages(conv_id: int) -> list[dict]:
             dataset = 'All'
         msgs.append({'role': r['role'], 'content': r['content'], 'dataset': dataset})
     return msgs
+
+
+def rename_conversation(conv_id: int, user_key: str, title: str) -> None:
+    """대화 제목 변경 (본인 소유만)."""
+    with _lock:
+        _conn.execute(
+            'UPDATE conversations SET title = ? WHERE id = ? AND user_key = ?',
+            (title, conv_id, user_key),
+        )
+        _conn.commit()
+
+
+def set_favorite(conv_id: int, user_key: str, favorite: bool) -> None:
+    """즐겨찾기 설정/해제 (본인 소유만)."""
+    with _lock:
+        _conn.execute(
+            'UPDATE conversations SET favorite = ? WHERE id = ? AND user_key = ?',
+            (1 if favorite else 0, conv_id, user_key),
+        )
+        _conn.commit()
 
 
 def delete_conversation(conv_id: int, user_key: str) -> None:
