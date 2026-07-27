@@ -396,6 +396,12 @@ if not DATASETS:
 
 _NO_RESULT = "관련 트리플을 찾지 못했습니다."
 
+# ★ 답변에서 데이터셋 섹션을 보여주는 순서(사용자 요청): ReportsDB → Confluence → PapersDB.
+#   search_targets/results 의 순서는 LLM 자동 선택 배열 순서나 다중 선택 시 set
+#   순회 순서 등 제각각이라 이 순서를 보장하지 않으므로, 결과를 조합할 때 항상
+#   이 순서로 정렬해서 내보낸다.
+_OUTPUT_ORDER = [REPORTS_DATASET, CONFLUENCE_DATASET, PAPERS_DATASET]
+
 # ★ 스키마 변경 대응: 구조(출처) 관계 타입.
 # 새 스키마는 엔티티와 메타 노드를 (entity)-[:FROM_PAPER]->(:Paper) /
 # (entity)-[:FROM_DOC]->(:Report) 로 연결한다. 그런데 Paper/Report 메타 노드도
@@ -1821,7 +1827,14 @@ recency_focus 판단 규칙 (매우 중요):
         sections        = []
         active_datasets = []
 
-        for ds, context in results.items():
+        # ReportsDB → Confluence → PapersDB 고정 순서로 정렬. _OUTPUT_ORDER 에
+        # 없는(향후 추가될) 데이터셋은 뒤에 원래 순서대로 붙인다.
+        ordered_ds = sorted(
+            results.keys(),
+            key=lambda d: _OUTPUT_ORDER.index(d) if d in _OUTPUT_ORDER else len(_OUTPUT_ORDER)
+        )
+        for ds in ordered_ds:
+            context = results[ds]
             desc = DATASETS[ds]['description']
             # ★ 데이터셋별 전체 컨텍스트 원문(트리플+문서 본문 전부)은 분량이 매우 커서
             #   가장 터미널을 어지럽히는 항목 중 하나 — level 3(상세)에서만 출력.
