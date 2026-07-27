@@ -92,7 +92,7 @@ def _wrap_bare_latex(text: str) -> str:
 
 
 def _protect_emphasis_chars_in_math(text: str) -> str:
-    """
+    r"""
     \(...\) / \[...\] 수식 구간 안의 '_' 와 '*' 를 HTML 숫자 문자 참조로 바꾼다.
 
     ★ \(...\) 로 감싸는 것만으로는 마크다운으로부터 내용을 보호하지 못한다 —
