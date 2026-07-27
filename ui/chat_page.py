@@ -569,7 +569,7 @@ def build_chat_page(request: Request = None):
                     'hover-btn'
                 ).style('color:#64748b;').tooltip('새 대화')
 
-            conv_list = ui.element('div').style('display:flex; flex-direction:column; gap:4px; width:100%;')
+            conv_list = ui.element('div').style('display:flex; flex-direction:column; gap:8px; width:100%;')
 
             ui.separator().style('border-color:#e2e8f0;')
 
@@ -799,19 +799,24 @@ def build_chat_page(request: Request = None):
                         'display:flex; align-items:center; gap:2px; width:100%;'
                     ):
                         (
+                            # ★ no-caps: Quasar 버튼은 기본적으로 text-transform:uppercase 라
+                            #   대화 제목의 영문이 전부 대문자로 바뀌어 버렸다. 원문 그대로 표시.
                             ui.button(title, on_click=lambda c=conv: _load_conversation(c))
-                            .props('flat dense align=left')
+                            .props('flat dense no-caps align=left')
                             .classes(
                                 'flex-grow text-sm rounded px-2 py-1.5 truncate text-left hover-btn ' +
                                 ('bg-indigo-100 text-indigo-800' if is_active else 'text-slate-500 hover:bg-slate-200')
                             )
-                            .style('min-width:0;')
+                            .style('min-width:0; text-transform:none;')
                         )
                         (
                             ui.button(icon='close', on_click=lambda c=conv: _delete_conversation(c))
-                            .props('flat round dense size=sm')
+                            .props('flat round dense size=xs')
                             .classes('hover-btn')
-                            .style('color:#cbd5e1; flex-shrink:0;')
+                            .style(
+                                'color:#cbd5e1; flex-shrink:0; width:20px; height:20px; '
+                                'min-width:20px; min-height:20px; font-size:11px;'
+                            )
                             .tooltip('대화 삭제')
                         )
 
