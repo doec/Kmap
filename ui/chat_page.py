@@ -514,7 +514,7 @@ def build_chat_page(request: Request = None):
         .input-card.input-card-compact { padding: 4px 14px 3px !important; }
         .input-card.input-card-compact .q-field__control,
         .input-card.input-card-compact .q-field__marginal { min-height: 0 !important; }
-        .input-card.input-card-compact .q-field__native { padding-top: 2px !important; padding-bottom: 0 !important; }
+        .input-card.input-card-compact .q-field__native { padding-top: 6px !important; padding-bottom: 0 !important; }
         /* ★ Quasar 는 입력창 아래에 힌트/에러 메시지용 공간(.q-field__bottom)을 항상
            예약해 둔다. 우리는 힌트를 쓰지 않으므로 이 빈 공간이 그대로 "입력창과
            모델 선택 드롭다운 사이의 불필요한 여백"으로 보였다 — 하단 배치에서 제거해
