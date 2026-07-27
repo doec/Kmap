@@ -649,36 +649,53 @@ def build_chat_page(request: Request = None):
         )
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
+        # ★ 챗봇 첫 화면 UX: 대화가 없을 때는 입력창이 화면 중앙에 크게 떠 있다가,
+        #   첫 질문을 보내면 지금의 "상단 스크롤 + 하단 고정 입력창" 구조로 전환된다.
+        #   input_box/send_btn 은 인스턴스를 하나만 만들고, 두 레이아웃 사이를
+        #   ui 엘리먼트의 .move() 로 그대로 옮겨 재사용한다(값/이벤트 핸들러 유지).
         with ui.element('div').style(
-            'flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:#f8fafc;'
+            'flex:1; min-width:0; position:relative; overflow:hidden; background:#f8fafc;'
         ):
-            scroll_area = ui.scroll_area().style('flex:1; min-height:0; width:100%; background:#f8fafc;')
-            with scroll_area:
-                chat_container = ui.element('div').style(
-                    'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%; width:100%;'
-                )
-                with chat_container:
-                    # spacer — pushes messages to bottom when few messages exist
-                    ui.element('div').style('flex:1;')
-                    # welcome message
-                    with ui.element('div').style('display:flex; align-items:flex-start; gap:8px;').classes('ai-msg'):
-                        ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                            'width:24px; height:24px; min-width:24px; font-size:12px; flex-shrink:0;'
-                        )
-                        with ui.element('div').classes(
-                            'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
-                        ).style('color:#334155;'):
-                            ui.markdown(
-                                "안녕하세요! **KMap 연구 어시스턴트**입니다.  \n"
-                                "논문·내부문서·데이터를 GraphRAG/RAG로 검색합니다. 무엇이든 질문해보세요!"
-                            )
+            # ── 중앙 시작 화면 (대화가 비어 있을 때) ──────────────────────────────────────
+            center_wrap = ui.element('div').style(
+                'position:absolute; inset:0; display:flex; flex-direction:column; '
+                'align-items:center; justify-content:center; gap:20px; padding:24px; '
+                'background:#f8fafc;'
+            )
+            with center_wrap:
+                with ui.element('div').style('display:flex; flex-direction:column; align-items:center; gap:8px;'):
+                    ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
+                        'width:48px; height:48px; font-size:24px;'
+                    )
+                    ui.label('KMap 연구 어시스턴트').style(
+                        'font-size:20px; font-weight:600; color:#1e293b;'
+                    )
+                    ui.label('논문·내부문서·데이터를 GraphRAG/RAG로 검색합니다. 무엇이든 질문해보세요!').style(
+                        'font-size:13px; color:#64748b;'
+                    )
+                center_input_slot = ui.element('div').style('width:100%; max-width:640px;')
 
-            # ── bottom bar ─────────────────────────────────────────────────────────────────────────────
-            with ui.element('div').style(
-                'flex-shrink:0; background:#f8fafc; border-top:1px solid #e2e8f0; padding:10px 16px 12px;'
-            ):
-                # input
-                with ui.element('div').style('display:flex; align-items:flex-end; gap:8px; width:100%;'):
+            # ── 대화 화면 (첫 질문 이후) ─────────────────────────────────────────────────
+            chat_layout = ui.element('div').style(
+                'position:absolute; inset:0; display:none; flex-direction:column; overflow:hidden;'
+            )
+            with chat_layout:
+                scroll_area = ui.scroll_area().style('flex:1; min-height:0; width:100%; background:#f8fafc;')
+                with scroll_area:
+                    chat_container = ui.element('div').style(
+                        'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%; width:100%;'
+                    )
+                    with chat_container:
+                        ui.element('div').style('flex:1;')   # 메시지가 적을 때 아래로 붙게 하는 스페이서
+
+                # ── bottom bar ─────────────────────────────────────────────────────────────────────────────
+                bottom_bar = ui.element('div').style(
+                    'flex-shrink:0; background:#f8fafc; border-top:1px solid #e2e8f0; padding:10px 16px 12px;'
+                )
+
+            # ── 입력창 (처음엔 중앙, 첫 질문 후 하단으로 이동) ────────────────────────────
+            with center_input_slot:
+                with ui.element('div').style('display:flex; align-items:flex-end; gap:8px; width:100%;') as input_row:
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꿈, Enter: 전송)')
                         .classes('flex-grow text-sm')
@@ -698,6 +715,23 @@ def build_chat_page(request: Request = None):
                             'color:white; min-width:36px; min-height:36px;'
                         )
                     )
+
+            def _show_chat_layout():
+                """첫 질문 전송 시: 중앙 화면 → 상단 스크롤+하단 입력창 구조로 전환."""
+                if 'moved' not in _layout_state:
+                    input_row.move(bottom_bar)
+                    _layout_state['moved'] = True
+                center_wrap.style('display:none')
+                chat_layout.style('display:flex')
+
+            def _show_center_layout():
+                """새 대화 시작 시: 하단 입력창 → 중앙 화면으로 복귀."""
+                input_row.move(center_input_slot)
+                _layout_state.pop('moved', None)
+                chat_layout.style('display:none')
+                center_wrap.style('display:flex')
+
+            _layout_state: dict = {}
 
         # ── helper: conversation list refresh ───────────────────────────────────────────────────────
         def _refresh_conv_list():
@@ -723,16 +757,9 @@ def build_chat_page(request: Request = None):
                 chat_container.clear()
                 with chat_container:
                     ui.element('div').style('flex:1;')
-                    with ui.element('div').style('display:flex; align-items:flex-start; gap:8px;').classes('ai-msg'):
-                        ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                            'width:24px; height:24px; min-width:24px; font-size:12px; flex-shrink:0;'
-                        )
-                        with ui.element('div').classes(
-                            'ai-bubble rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm'
-                        ).style('color:#334155;'):
-                            ui.markdown("새 대화를 시작합니다. 무엇이든 질문해보세요!")
                 rag.clear_history()
                 _refresh_conv_list()
+                _show_center_layout()
 
         def _load_conversation(conv: dict):
             state.active_conv_id = conv['id']
@@ -741,6 +768,8 @@ def build_chat_page(request: Request = None):
             with chat_container:
                 for msg in state.messages:
                     _render_message(msg)
+            if state.messages:
+                _show_chat_layout()
             scroll_area.scroll_to(percent=1.0)
             _refresh_conv_list()
             # 불러온 대화의 수식도 다시 typeset
@@ -802,6 +831,7 @@ def build_chat_page(request: Request = None):
                 state.conversations.append(conv)
                 state.active_conv_id = conv['id']
                 _refresh_conv_list()
+                _show_chat_layout()   # ★ 첫 질문: 중앙 화면 → 대화 화면으로 전환
 
             # ── user bubble ─────────────────────────────────────────────────────────────────────────────────────
             user_msg = {'role': 'user', 'content': query, 'dataset': current_dataset}
