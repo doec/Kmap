@@ -863,10 +863,12 @@ def build_chat_page(request: Request = None):
                 state.active_conv_id = conv['id']
                 _refresh_conv_list()
                 _show_chat_layout()   # ★ 첫 질문: 중앙 화면 → 대화 화면으로 전환
-                # ★ input_row.move() 로 입력창 DOM 이 재배치되면서, 그 전에 비워둔 값이
+                # ★ input_block.move() 로 입력창 DOM 이 재배치되면서, 그 전에 비워둔 값이
                 #   화면에 다시 첫 질문 텍스트로 남아 보이는 문제가 있었다. 이동 직후
-                #   한 번 더 명시적으로 비워 확실히 지운다.
+                #   한 번 더 명시적으로 비우고 .update() 로 클라이언트에 강제 재동기화한다
+                #   (move 로 인한 재마운트 시점과 값 갱신 메시지의 순서가 꼬여도 확실히 반영됨).
                 input_box.value = ''
+                input_box.update()
 
             # ── user bubble ─────────────────────────────────────────────────────────────────────────────────────
             user_msg = {'role': 'user', 'content': query, 'dataset': current_dataset}
