@@ -596,15 +596,19 @@ def build_chat_page(request: Request = None):
             'width:225px; min-width:160px; max-width:480px; flex-shrink:0; background:#f1f5f9; '
             'border-right:1px solid #e2e8f0; padding:12px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; overflow-x:hidden;'
         ):
-            with ui.element('div').style('display:flex; align-items:center; justify-content:space-between;'):
-                ui.label('대화 기록').style(
-                    'font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;'
+            # ★ '대화 기록' 헤더와 + 아이콘 버튼을 없애고, 대화 목록과 동일한 글자
+            #   크기·스타일의 '＋ 새 대화' 메뉴 항목으로 대체한다(conv-title 클래스 재사용).
+            #   '새 대화'와 대화 목록은 한 그룹으로 보이도록 좁은 gap 으로 함께 묶는다.
+            with ui.element('div').style('display:flex; flex-direction:column; gap:1px; width:100%;'):
+                (
+                    ui.button('＋  새 대화', on_click=lambda: _new_conversation())
+                    .props('flat dense no-caps align=left')
+                    .classes('w-full rounded truncate text-left conv-title')
+                    .style('min-width:0; text-transform:none;')
                 )
-                ui.button(icon='add', on_click=lambda: _new_conversation()).props('flat round dense').classes(
-                    'hover-btn'
-                ).style('color:#64748b;').tooltip('새 대화')
-
-            conv_list = ui.element('div').style('display:flex; flex-direction:column; gap:1px; width:100%;')
+                conv_list = ui.element('div').style(
+                    'display:flex; flex-direction:column; gap:1px; width:100%;'
+                )
 
             ui.separator().style('border-color:#e2e8f0;')
 
