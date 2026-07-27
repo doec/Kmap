@@ -4,9 +4,10 @@ import asyncio
 import os
 import re
 
-from nicegui import ui
+from nicegui import app, ui
 from starlette.requests import Request
 
+import conversation_store
 from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, CONFLUENCE_DATASET, DATASETS
 from retriever.neo4j_retriever import Neo4jRetriever
 from access_log import client_ip as _client_ip, log_search
@@ -312,6 +313,19 @@ def build_chat_page(request: Request = None):
     # ★ 접속한 사용자의 IP — 검색 기록 로그(누가 무엇을 검색했는지)에 남기기 위함.
     #   NiceGUI 가 @ui.page 함수에 request 를 자동으로 주입해준다.
     session_ip = _client_ip(request) if request is not None else 'unknown'
+
+    # ★ 대화 히스토리 소유자 식별 키 — IP 가 아니라 "브라우저 쿠키 기반 식별자"를 쓴다.
+    #   IP 를 키로 쓰면 (a) WSL 에서 윈도우 호스트 접속이 모두 게이트웨이 IP 하나로
+    #   보여 사용자 구분이 안 되고, (b) 사내망 NAT 뒤에서 여러 사람이 같은 IP 로
+    #   잡히고, (c) DHCP 로 IP 가 바뀌면 기존 기록을 잃는다.
+    #   app.storage.browser['id'] 는 NiceGUI 가 쿠키로 유지하는 브라우저별 UUID 라
+    #   새로고침·재접속·서버 재시작 후에도 같은 사용자로 이어진다.
+    try:
+        user_key = app.storage.browser['id']
+    except Exception as e:
+        # storage_secret 미설정 등으로 접근 실패 시: IP 로 폴백(구분력은 떨어지지만 동작은 유지)
+        print(f"[WARN] browser storage 사용 불가 → IP 를 대화 소유자 키로 폴백 ({e})")
+        user_key = f"ip:{session_ip}"
 
     # capture client at page-build time — this is the only moment slot context is guaranteed
     from nicegui import context as _ctx
@@ -772,20 +786,47 @@ def build_chat_page(request: Request = None):
 
         # ── helper: conversation list refresh ───────────────────────────────────────────────────────
         def _refresh_conv_list():
+            # ★ 목록은 DB 에서 매번 다시 읽는다 (이미 최신순으로 정렬되어 나오므로
+            #   reversed() 불필요). 이렇게 하면 새로고침/재접속 후에도 그대로 보인다.
+            state.conversations = conversation_store.list_conversations(user_key)
             conv_list.clear()
             with conv_list:
-                for conv in reversed(state.conversations):
+                for conv in state.conversations:
                     cid   = conv['id']
                     title = conv['title']
                     is_active = cid == state.active_conv_id
-                    (
-                        ui.button(title, on_click=lambda c=conv: _load_conversation(c))
-                        .props('flat dense align=left')
-                        .classes(
-                            'w-full text-sm rounded px-2 py-1.5 truncate text-left hover-btn ' +
-                            ('bg-indigo-100 text-indigo-800' if is_active else 'text-slate-500 hover:bg-slate-200')
+                    with ui.element('div').style(
+                        'display:flex; align-items:center; gap:2px; width:100%;'
+                    ):
+                        (
+                            ui.button(title, on_click=lambda c=conv: _load_conversation(c))
+                            .props('flat dense align=left')
+                            .classes(
+                                'flex-grow text-sm rounded px-2 py-1.5 truncate text-left hover-btn ' +
+                                ('bg-indigo-100 text-indigo-800' if is_active else 'text-slate-500 hover:bg-slate-200')
+                            )
+                            .style('min-width:0;')
                         )
-                    )
+                        (
+                            ui.button(icon='close', on_click=lambda c=conv: _delete_conversation(c))
+                            .props('flat round dense size=sm')
+                            .classes('hover-btn')
+                            .style('color:#cbd5e1; flex-shrink:0;')
+                            .tooltip('대화 삭제')
+                        )
+
+        def _delete_conversation(conv: dict):
+            conversation_store.delete_conversation(conv['id'], user_key)
+            if state.active_conv_id == conv['id']:
+                # 지금 보고 있던 대화를 지웠으면 화면도 초기 상태로 되돌린다
+                state.messages = []
+                state.active_conv_id = None
+                chat_container.clear()
+                with chat_container:
+                    ui.element('div').style('flex:1;')
+                rag.clear_history()
+                _show_center_layout()
+            _refresh_conv_list()
 
         def _new_conversation():
             if state.messages:
@@ -800,7 +841,12 @@ def build_chat_page(request: Request = None):
 
         def _load_conversation(conv: dict):
             state.active_conv_id = conv['id']
-            state.messages = conv['messages']
+            # ★ 메시지는 메모리에 들고 있지 않고 그때그때 DB 에서 불러온다
+            #   (새로고침/재접속/서버 재시작 후에도 대화가 유지되는 이유).
+            state.messages = conversation_store.load_messages(conv['id'])
+            conversation_store.touch_ip(conv['id'], session_ip)
+            # 이어서 질문할 때 LLM 이 맥락을 알 수 있도록 대화 히스토리도 복원
+            rag.set_history(state.messages)
             chat_container.clear()
             with chat_container:
                 for msg in state.messages:
@@ -814,6 +860,10 @@ def build_chat_page(request: Request = None):
                 _page_client.run_javascript('window.kmapTypeset && window.kmapTypeset()')
             except Exception:
                 pass
+
+        # ★ 페이지가 열릴 때 이 사용자의 저장된 대화 목록을 사이드바에 채운다.
+        #   (새로고침/재접속해도 예전 대화가 그대로 보이는 부분)
+        _refresh_conv_list()
 
         # ── helper: render a saved message ─────────────────────────────────────────────────────────────
         def _render_message(msg: dict):
@@ -882,13 +932,14 @@ def build_chat_page(request: Request = None):
 
             # ── create conversation if first message ────────────────────────────────────────────────
             if not state.messages:
-                conv = {
-                    'id':       len(state.conversations),
-                    'title':    query[:28] + ('…' if len(query) > 28 else ''),
-                    'messages': state.messages,
-                }
-                state.conversations.append(conv)
-                state.active_conv_id = conv['id']
+                # ★ DB 에 새 대화를 만들고, 그 자동 생성 id 를 그대로 활성 대화 id 로 쓴다
+                #   (예전엔 len(state.conversations) 를 id 로 썼는데, DB 를 쓰는 지금은
+                #    실제 행 id 와 어긋나 잘못된 대화를 불러올 수 있어 바꿨다).
+                state.active_conv_id = conversation_store.create_conversation(
+                    user_key,
+                    query[:28] + ('…' if len(query) > 28 else ''),
+                    session_ip,
+                )
                 _refresh_conv_list()
                 _show_chat_layout()   # ★ 첫 질문: 중앙 배치 → 대화 배치로 전환
                 # ★ 첫 질문은 레이아웃 전환까지 겹쳐 경합 구간이 가장 넓으므로, 전환
@@ -898,6 +949,9 @@ def build_chat_page(request: Request = None):
             # ── user bubble ─────────────────────────────────────────────────────────────────────────────────────
             user_msg = {'role': 'user', 'content': query, 'dataset': current_dataset}
             state.messages.append(user_msg)
+            conversation_store.add_message(
+                state.active_conv_id, 'user', query, current_dataset
+            )
 
             with chat_container:
                 with ui.element('div').style('display:flex; flex-direction:column; align-items:flex-end; gap:4px; width:100%;'):
@@ -1073,6 +1127,12 @@ def build_chat_page(request: Request = None):
             # ── save message ────────────────────────────────────────────────────────────────────────────────────────
             ai_msg = {'role': 'assistant', 'content': full_text, 'graph_id': graph_id}
             state.messages.append(ai_msg)
+            # ★ DB 에도 저장 (graph_id 는 임시파일 기반이라 저장하지 않는다 — 자세한
+            #   이유는 conversation_store.add_message 주석 참고)
+            if state.active_conv_id is not None and full_text:
+                conversation_store.add_message(
+                    state.active_conv_id, 'assistant', full_text
+                )
 
             scroll_area.scroll_to(percent=1.0)
             send_btn.enable()

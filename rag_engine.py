@@ -450,6 +450,22 @@ class GraphRAG:
         self.history = []
         self._dbg(2, "[Debug] 대화 히스토리 초기화")
 
+    def set_history(self, messages: list[dict]):
+        """
+        저장된 대화를 다시 불러올 때 LLM 히스토리를 복원한다.
+
+        DB 에서 읽은 메시지에는 dataset/graph_id 등 UI 전용 필드가 섞여 있으므로,
+        LLM 이 필요한 role/content 만 추려 담고 최근 MAX_HISTORY_TURNS 턴으로 자른다.
+        """
+        cleaned = [
+            {"role": m["role"], "content": m["content"]}
+            for m in messages
+            if m.get("role") in ("user", "assistant") and m.get("content")
+        ]
+        max_messages = MAX_HISTORY_TURNS * 2
+        self.history = cleaned[-max_messages:]
+        self._dbg(2, f"[Debug] 대화 히스토리 복원: {len(self.history)}개 메시지")
+
     def _extract_keywords(self, query: str) -> dict:
         """
         질문에서 검색 키워드/날짜 범위를 추출한다.

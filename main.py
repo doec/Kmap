@@ -6,6 +6,7 @@ from nicegui import ui, app
 from fastapi.responses import HTMLResponse
 from starlette.requests import Request
 
+import conversation_store
 from ui.chat_page import build_chat_page, _neo4j_viz
 from access_log import log_access, client_ip
 
@@ -50,5 +51,14 @@ app.add_static_files('/mathjax', str(_mathjax_dir))
 
 ui.page('/')(build_chat_page)
 
+# ★ 대화 히스토리 DB(SQLite) 초기화 — 테이블이 없으면 만들고, 있으면 그대로 쓴다.
+conversation_store.init_db()
+
+# ★ storage_secret: app.storage.browser(쿠키 기반 브라우저 식별자)를 쓰기 위한 필수 설정.
+#   이 값이 바뀌면 기존 쿠키가 무효화되어 사용자들이 이전 대화 목록을 잃으므로,
+#   .env 의 KMAP_STORAGE_SECRET 에 고정값을 넣어 계속 유지하는 것을 권장한다.
+_storage_secret = os.getenv('KMAP_STORAGE_SECRET', 'kmap-local-dev-secret')
+
 ui.run(title='KMap', port=8080, reload=False, dark=False,
-       show=False, favicon='./favicon_kg_t.svg')
+       show=False, favicon='./favicon_kg_t.svg',
+       storage_secret=_storage_secret)
