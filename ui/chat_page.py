@@ -712,7 +712,7 @@ def build_chat_page(request: Request = None):
                 ).classes('input-card'):
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요')
-                        .classes('w-full text-sm')
+                        .classes('w-full text-sm kmap-chat-input')
                         .style('font-size:14px;')
                         # ★ 처음부터 1줄 높이로 시작하고, 내용이 늘어나면(줄바꿈/긴 문장)
                         #   autogrow 가 자동으로 키워준다.
@@ -841,13 +841,35 @@ def build_chat_page(request: Request = None):
                         if graph_id:
                             _add_subgraph_widget(graph_id, _page_client)
 
+        # ★ 입력창 비우기 — 서버 쪽 value 만 ''로 바꾸면, 클라이언트가 그 직후 보류
+        #   중이던 입력 이벤트(이전에 타이핑한 텍스트)를 되돌려 보내면서 값이 되살아나는
+        #   경합이 있었다(그래서 첫 질문이 입력창에 계속 남고, autogrow 가 그 텍스트에
+        #   맞춰 높이를 2줄 이상으로 유지했다). 그래서 브라우저의 실제 <textarea> 를
+        #   직접 비우고 input 이벤트를 발생시켜, Quasar/Vue 모델과 서버 값이 모두 ''로
+        #   확정되고 autogrow 도 1줄로 다시 줄어들게 한다.
+        _CLEAR_INPUT_JS = """
+            const ta = document.querySelector('.kmap-chat-input textarea');
+            if (ta) {
+                ta.value = '';
+                ta.style.height = 'auto';
+                ta.dispatchEvent(new Event('input', {bubbles: true}));
+            }
+        """
+
+        async def _clear_input():
+            input_box.value = ''
+            try:
+                await _page_client.run_javascript(_CLEAR_INPUT_JS)
+            except Exception:
+                pass
+
         # ── send handler ─────────────────────────────────────────────────────────────────────────────────────────
         async def on_send_message():
             query = input_box.value.strip()
             if not query:
                 return
 
-            input_box.value = ''
+            await _clear_input()
             send_btn.disable()
 
             # ★ "전체"만 선택돼 있으면 rag 쪽에는 "All" 문자열로(자동 데이터셋 선택),
@@ -869,8 +891,9 @@ def build_chat_page(request: Request = None):
                 state.active_conv_id = conv['id']
                 _refresh_conv_list()
                 _show_chat_layout()   # ★ 첫 질문: 중앙 배치 → 대화 배치로 전환
-                # (입력창은 DOM 위치가 고정이라 재생성되지 않으므로, 위에서 한 번
-                #  비운 value='' 가 그대로 유지된다 — 추가 처리 불필요)
+                # ★ 첫 질문은 레이아웃 전환까지 겹쳐 경합 구간이 가장 넓으므로, 전환
+                #   직후에 한 번 더 확실히 비운다(이미 비어 있으면 무해한 no-op).
+                await _clear_input()
 
             # ── user bubble ─────────────────────────────────────────────────────────────────────────────────────
             user_msg = {'role': 'user', 'content': query, 'dataset': current_dataset}
