@@ -667,7 +667,7 @@ def build_chat_page(request: Request = None):
                     ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
                         'width:48px; height:48px; font-size:24px;'
                     )
-                    ui.label('KMap 연구 어시스턴트').style(
+                    ui.label('KMap-Agent').style(
                         'font-size:20px; font-weight:600; color:#1e293b;'
                     )
                     ui.label('논문·내부문서·데이터를 GraphRAG/RAG로 검색합니다. 무엇이든 질문해보세요!').style(
