@@ -405,9 +405,10 @@ def build_chat_page(request: Request = None):
         #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
 
         /* ── 대화 목록 ─────────────────────────────────────────────────────────
-           ★ 색상 톤: tailwind 의 slate 계열(#64748b, #334155 …)은 이름은 회색이지만
-           실제로는 파란빛이 섞여 있어 "파란색 계통"으로 보인다. 그래서 사이드바는
-           파란기가 전혀 없는 중립 회색(zinc 계열: #71717a, #3f3f46 …)으로 통일한다. */
+           ★ 글자/아이콘 색: tailwind 의 slate 계열(#64748b, #334155 …)은 이름은 회색이지만
+           실제로는 파란빛이 섞여 있어 "파란색 계통"으로 보인다. 그래서 글자와 아이콘은
+           파란기가 없는 중립 회색(zinc 계열: #71717a, #3f3f46 …)을 쓴다.
+           단, 배경/테두리는 기존 톤(#f1f5f9, #e2e8f0 …)을 그대로 유지한다. */
         .conv-title {
             font-size: 12.5px !important;
             padding: 4px 8px !important;
@@ -416,10 +417,10 @@ def build_chat_page(request: Request = None):
             font-weight: 400 !important;
             transition: background-color 0.12s, color 0.12s;
         }
-        .conv-title:hover { background: #ececee !important; color: #27272a !important; }
+        .conv-title:hover { background: #e9eef4 !important; color: #27272a !important; }
         /* 선택된 대화: 한 단계 진한 중립 회색으로 강조 */
         .conv-title.conv-active {
-            background: #e4e4e7 !important;     /* zinc-200 */
+            background: #dde3ea !important;
             color: #18181b !important;          /* zinc-900 */
             font-weight: 500 !important;
         }
@@ -456,13 +457,13 @@ def build_chat_page(request: Request = None):
             color: #3f3f46 !important;          /* zinc-700 (진한 회색) */
             font-weight: 500 !important;
             background: #ffffff !important;
-            border: 1px solid #e4e4e7 !important;
+            border: 1px solid #e2e8f0 !important;
             border-radius: 8px !important;
             transition: background-color 0.12s, border-color 0.12s, color 0.12s;
         }
         .new-chat-btn:hover {
-            background: #fafafa !important;
-            border-color: #d4d4d8 !important;
+            background: #f8fafc !important;
+            border-color: #cbd5e1 !important;
             color: #18181b !important;
         }
         /* 대화 목록 항목과 아이콘·글자 시작 위치를 맞춘다 */
@@ -477,13 +478,13 @@ def build_chat_page(request: Request = None):
             background: transparent !important;
             transition: background-color 0.12s, color 0.12s;
         }
-        .mode-btn:hover { background: #ececee !important; color: #3f3f46 !important; }
+        .mode-btn:hover { background: #e9eef4 !important; color: #3f3f46 !important; }
         /* 선택된 모드: 밝은 회색 배경 + 진한 회색 글자 (테두리로 선택 상태를 분명히) */
         .mode-btn.mode-active {
-            background: #e4e4e7 !important;     /* zinc-200 */
+            background: #e2e8f0 !important;
             color: #18181b !important;          /* zinc-900 */
             font-weight: 600 !important;
-            box-shadow: inset 0 0 0 1px #d4d4d8 !important;
+            box-shadow: inset 0 0 0 1px #cbd5e1 !important;
         }
 
         /* 점3개 메뉴 버튼: 해당 줄에 마우스를 올렸을 때만 보이게 + 아이콘 크기 축소.
@@ -656,11 +657,9 @@ def build_chat_page(request: Request = None):
         # ★ 폭을 마우스 드래그로 조절할 수 있도록 id 를 부여하고, 오른쪽에 리사이즈
         #   핸들(얇은 세로 바)을 둔다. 실제 드래그 로직은 아래 ui.run_javascript 로
         #   한 번만 주입한다 (min 160px ~ max 480px, localStorage 에 폭 저장).
-        #   배경/테두리도 파란기 없는 중립 회색(zinc)으로 맞춘다 — 배경이 slate 계열이면
-        #   글자색만 바꿔도 전체가 여전히 파랗게 보인다.
         with ui.element('div').props('id=kmap-sidebar').style(
-            'width:225px; min-width:160px; max-width:480px; flex-shrink:0; background:#f4f4f5; '
-            'border-right:1px solid #e4e4e7; padding:12px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; overflow-x:hidden;'
+            'width:225px; min-width:160px; max-width:480px; flex-shrink:0; background:#f1f5f9; '
+            'border-right:1px solid #e2e8f0; padding:12px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; overflow-x:hidden;'
         ):
             # ★ '대화 기록' 헤더와 + 아이콘 버튼을 없애고, 대화 목록과 동일한 글자
             #   크기·스타일의 '＋ 새 대화' 메뉴 항목으로 대체한다(conv-title 클래스 재사용).
@@ -678,7 +677,7 @@ def build_chat_page(request: Request = None):
                     'display:flex; flex-direction:column; gap:1px; width:100%;'
                 )
 
-            ui.separator().style('border-color:#e4e4e7;')
+            ui.separator().style('border-color:#e2e8f0;')
 
             ui.label('검색 모드').style(
                 'font-size:11px; font-weight:600; color:#71717a; text-transform:uppercase; letter-spacing:0.05em;'
@@ -713,7 +712,7 @@ def build_chat_page(request: Request = None):
             hop_chk.bind_value(state, 'use_2hop')
             hop_chk.tooltip('2-hop: 검색된 노드의 이웃 노드까지 확장 탐색')
 
-            ui.separator().style('border-color:#e4e4e7;')
+            ui.separator().style('border-color:#e2e8f0;')
 
             # ── 벡터 검색 컷오프 튜닝 (접힘 상태로 시작) ────────────────────────────
             # rag.entity_score_min / relative_gap / doc_score_min 는 GraphRAG 인스턴스
@@ -743,7 +742,7 @@ def build_chat_page(request: Request = None):
                         lambda e: setattr(rag, 'doc_score_min', e.value)
                     )
 
-                    ui.separator().style('border-color:#e4e4e7; margin:2px 0;')
+                    ui.separator().style('border-color:#e2e8f0; margin:2px 0;')
 
                     # ★ 터미널 디버그 출력량 조절. rag.debug_level 도 인스턴스 속성이라
                     #   즉시 반영된다 (서버 재시작 불필요).
@@ -768,7 +767,7 @@ def build_chat_page(request: Request = None):
                     #   바꿔도 항상 같은 값으로 동기화된다.
                     llm_select.bind_value(rag, 'answer_llm')
 
-            ui.separator().style('border-color:#e4e4e7;')
+            ui.separator().style('border-color:#e2e8f0;')
 
         # ── sidebar resize handle ──────────────────────────────────────────────────────────────────────
         ui.element('div').props('id=kmap-sidebar-resizer').style(
