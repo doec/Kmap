@@ -912,7 +912,8 @@ def build_chat_page(request: Request = None):
                 bottom_spacer.style('display:none')
                 greeting.style('display:none')
                 scroll_area.style('display:block')
-                bottom_bar.style('border-top:1px solid #e2e8f0; padding:6px 16px 8px')
+                # 입력창 카드 자체가 테두리·그림자로 이미 구분되므로 위쪽 수평선은 두지 않는다
+                bottom_bar.style('border-top:none; padding:6px 16px 8px')
                 # ★ 하단에 있을 때만 입력창 내부 상하 여백을 줄인다(중앙 배치일 때는
                 #   여유 있게 보이는 편이 좋아 원래 여백을 유지).
                 input_card.classes(add='input-card-compact')
