@@ -535,6 +535,20 @@ def build_chat_page(request: Request = None):
         .ai-bubble em, .ai-bubble i { font-style: normal !important; font-weight: 600; }
     </style>
     <script>
+        // ★ 채팅 입력창에서 "Shift 없는 Enter" 의 줄바꿈 기본동작을 차단한다.
+        //   document 레벨 + capture 단계라 Quasar/Vue 의 컴포넌트 핸들러보다 먼저
+        //   실행되므로, 줄바꿈이 입력창에 잠깐 보였다 사라지는 일이 없다.
+        //   (.props('@keydown.enter=...') 로 Vue 속성을 넣는 방식은 Quasar 컴포넌트에
+        //    안정적으로 붙지 않아 줄바꿈이 새는 문제가 있었다.)
+        //   stopPropagation 은 하지 않는다 — NiceGUI 가 등록한 keydown.enter 리스너가
+        //   그대로 실행되어 "전송" 동작은 정상 수행되어야 하기 때문.
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+            const el = e.target;
+            if (!el || !el.closest || !el.closest('.kmap-chat-input')) return;
+            e.preventDefault();
+        }, true);
+
         // 답변이 렌더링/갱신된 뒤 호출하면 새로 들어온 수식을 다시 typeset 한다.
         window.kmapTypeset = function () {
             if (window.MathJax && window.MathJax.typesetPromise) {
@@ -856,11 +870,10 @@ def build_chat_page(request: Request = None):
                         # ★ 처음부터 1줄 높이로 시작하고, 내용이 늘어나면(줄바꿈/긴 문장)
                         #   autogrow 가 자동으로 키워준다.
                         .props('borderless dense autogrow input-style="min-height:24px"')
-                        # ★ Shift 없는 순수 Enter 의 줄바꿈 기본동작만 막는다. Vue 템플릿에
-                        #   정적으로 붙는 속성이라(=엘리먼트 생성과 동시에 적용) 렌더링 이후에
-                        #   JS 를 주입하는 방식과 달리 타이밍 경쟁이 없다. Shift+Enter 는
-                        #   $event.shiftKey 가 true 라 이 조건에 안 걸려 자연스럽게 줄바꿈된다.
-                        .props('''@keydown.enter="$event.shiftKey || $event.preventDefault()"''')
+                        # ★ Shift 없는 Enter 의 줄바꿈 차단은 head 의 document 레벨
+                        #   capture 리스너(.kmap-chat-input 대상)가 담당한다.
+                        #   여기서 @keydown 을 props 로 넣던 방식은 Quasar 컴포넌트에
+                        #   안정적으로 적용되지 않아 줄바꿈이 새는 문제가 있었다.
                     )
                     # ── 카드 하단 툴바: 왼쪽에 모델 선택, 오른쪽에 전송 버튼 ──────────────
                     with ui.element('div').classes('input-toolbar').style(
