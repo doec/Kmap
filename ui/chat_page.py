@@ -416,12 +416,47 @@ def build_chat_page(request: Request = None):
             font-weight: 400 !important;
             transition: background-color 0.12s, color 0.12s;
         }
-        .conv-title:hover { background: #e2e8f0 !important; color: #334155 !important; }
+        .conv-title:hover { background: #e9eef4 !important; color: #475569 !important; }
+        /* 선택된 대화: 파란색 계열 대신 한 단계 진한 회색으로 강조 */
         .conv-title.conv-active {
-            background: #e0e7ff !important;     /* indigo-100 (옅게) */
-            color: #4338ca !important;          /* indigo-700 */
+            background: #dde3ea !important;
+            color: #1e293b !important;          /* slate-800 (진한 회색) */
             font-weight: 500 !important;
         }
+
+        /* '＋ 새 대화': 대화 목록과 구분되도록 흰 배경 + 테두리의 버튼 형태로 */
+        .new-chat-btn {
+            font-size: 12.5px !important;
+            padding: 6px 10px !important;
+            min-height: 0 !important;
+            color: #334155 !important;          /* slate-700 (진한 회색) */
+            font-weight: 500 !important;
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 8px !important;
+            transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+        }
+        .new-chat-btn:hover {
+            background: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        /* 검색 모드 버튼 (Hybrid / Vector / Text) — 회색 톤으로 통일 */
+        .mode-btn {
+            font-size: 12px !important;
+            padding: 4px 0 !important;
+            min-height: 0 !important;
+            color: #64748b !important;
+            background: transparent !important;
+            transition: background-color 0.12s, color 0.12s;
+        }
+        .mode-btn:hover { background: #e9eef4 !important; color: #334155 !important; }
+        .mode-btn.mode-active {
+            background: #475569 !important;     /* slate-600 (진한 회색) */
+            color: #ffffff !important;
+            font-weight: 500 !important;
+        }
+
         /* 점3개 메뉴 버튼: 해당 줄에 마우스를 올렸을 때만 보이게 + 아이콘 크기 축소.
            (버튼의 font-size 로는 Quasar 의 .q-icon 크기가 안 바뀌어 직접 지정한다) */
         .conv-row .conv-menu {
@@ -598,12 +633,13 @@ def build_chat_page(request: Request = None):
         ):
             # ★ '대화 기록' 헤더와 + 아이콘 버튼을 없애고, 대화 목록과 동일한 글자
             #   크기·스타일의 '＋ 새 대화' 메뉴 항목으로 대체한다(conv-title 클래스 재사용).
-            #   '새 대화'와 대화 목록은 한 그룹으로 보이도록 좁은 gap 으로 함께 묶는다.
-            with ui.element('div').style('display:flex; flex-direction:column; gap:1px; width:100%;'):
+            #   '새 대화'는 목록 항목과 구분되도록 별도 스타일(new-chat-btn)을 쓰고,
+            #   목록과는 살짝 간격을 둔다.
+            with ui.element('div').style('display:flex; flex-direction:column; gap:10px; width:100%;'):
                 (
                     ui.button('＋  새 대화', on_click=lambda: _new_conversation())
                     .props('flat dense no-caps align=left')
-                    .classes('w-full rounded truncate text-left conv-title')
+                    .classes('w-full truncate text-left new-chat-btn')
                     .style('min-width:0; text-transform:none;')
                 )
                 conv_list = ui.element('div').style(
@@ -618,23 +654,25 @@ def build_chat_page(request: Request = None):
 
             mode_btns: dict[str, ui.button] = {}
 
+            # ★ 선택된 모드 강조도 파란색(indigo-600) 대신 진한 회색으로 — 사이드바
+            #   전체를 회색 톤으로 통일해 튀지 않게 한다(mode-btn / mode-active CSS 참고).
             def _on_mode(m: str):
                 state.search_mode = m
                 for k, b in mode_btns.items():
                     if k == m:
-                        b.classes(remove='text-slate-500 hover:text-slate-800', add='bg-indigo-600 text-white')
+                        b.classes(add='mode-active')
                     else:
-                        b.classes(remove='bg-indigo-600 text-white', add='text-slate-500 hover:text-slate-800')
+                        b.classes(remove='mode-active')
 
             with ui.element('div').style('display:flex; flex-direction:row; gap:4px; width:100%;'):
                 for label, val in _MODE_OPTIONS:
                     b = (
                         ui.button(label, on_click=lambda v=val: _on_mode(v))
                         .props('flat dense no-caps')
-                        .classes('flex-1 rounded transition-colors hover-btn')
-                        .style('font-size:12px; padding:4px 0; min-height:0;')
+                        .classes('flex-1 rounded transition-colors mode-btn')
                     )
-                    b.classes('bg-indigo-600 text-white' if val == state.search_mode else 'text-slate-500 hover:text-slate-800')
+                    if val == state.search_mode:
+                        b.classes(add='mode-active')
                     mode_btns[val] = b
 
             hop_chk = ui.checkbox('2-hop 탐색', value=state.use_2hop).props('dense').style(
