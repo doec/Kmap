@@ -634,11 +634,10 @@ def build_chat_page(request: Request = None):
                             'GaussO4.1':  'GaussO4.1',
                             'Gemma4':     'Gemma4 (경량/빠름)',
                         },
-                        value=rag.answer_llm,
                     ).props('dense outlined label="답변 생성 모델"').style('width:100%;')
-                    llm_select.on_value_change(
-                        lambda e: setattr(rag, 'answer_llm', e.value)
-                    )
+                    # ★ 채팅창 하단의 chat_llm_select 와 양방향 바인딩 — 둘 중 어디서
+                    #   바꿔도 항상 같은 값으로 동기화된다.
+                    llm_select.bind_value(rag, 'answer_llm')
 
             ui.separator().style('border-color:#e2e8f0;')
 
@@ -695,38 +694,52 @@ def build_chat_page(request: Request = None):
 
             # ── 입력창 (처음엔 중앙, 첫 질문 후 하단으로 이동) ────────────────────────────
             with center_input_slot:
-                with ui.element('div').style('display:flex; align-items:flex-end; gap:8px; width:100%;') as input_row:
-                    input_box = (
-                        ui.textarea(placeholder='질문을 입력하세요… (Shift+Enter: 줄바꿈, Enter: 전송)')
-                        .classes('flex-grow text-sm')
-                        .style('font-size:14px;')
-                        .props('outlined rounded dense autogrow')
-                        # 줄바꿈 방지(preventDefault)는 아래 .on('keydown.enter.exact.prevent')
-                        # 에서 처리한다 (NiceGUI 가 클라이언트 측 리스너를 올바른 엘리먼트에
-                        # 직접 붙여주고 .prevent 도 브라우저에서 즉시 적용되므로, .props 로
-                        # @keydown 을 넣는 방식보다 안정적으로 동작한다).
-                    )
-                    send_btn = (
-                        ui.button(icon='arrow_upward')
-                        .props('round unelevated')
-                        .classes('hover-btn')
-                        .style(
-                            'background:linear-gradient(135deg,#6366f1,#8b5cf6);'
-                            'color:white; min-width:36px; min-height:36px;'
+                with ui.element('div').style('display:flex; flex-direction:column; gap:6px; width:100%;') as input_block:
+                    with ui.element('div').style('display:flex; align-items:flex-end; gap:8px; width:100%;'):
+                        input_box = (
+                            ui.textarea(placeholder='질문을 입력하세요')
+                            .classes('flex-grow text-sm')
+                            .style('font-size:14px;')
+                            .props('outlined rounded dense autogrow rows=2')
+                            # 줄바꿈 방지(preventDefault)는 아래 .on('keydown.enter.exact.prevent')
+                            # 에서 처리한다 (NiceGUI 가 클라이언트 측 리스너를 올바른 엘리먼트에
+                            # 직접 붙여주고 .prevent 도 브라우저에서 즉시 적용되므로, .props 로
+                            # @keydown 을 넣는 방식보다 안정적으로 동작한다).
                         )
-                    )
+                        send_btn = (
+                            ui.button(icon='arrow_upward')
+                            .props('round unelevated')
+                            .classes('hover-btn')
+                            .style(
+                                'background:linear-gradient(135deg,#6366f1,#8b5cf6);'
+                                'color:white; min-width:36px; min-height:36px;'
+                            )
+                        )
+                    # ★ 답변 생성 모델을 채팅창에서 바로 고를 수 있게 — 사이드바의
+                    #   llm_select 와 rag.answer_llm 을 함께 바인딩해 두 곳이 항상
+                    #   같은 값으로 동기화된다.
+                    with ui.element('div').style('display:flex; align-items:center; gap:6px;'):
+                        ui.label('모델').style('font-size:11px; color:#94a3b8;')
+                        chat_llm_select = ui.select(
+                            {
+                                None:        'GPT-OSS 120B (기본)',
+                                'GaussO4.1': 'GaussO4.1',
+                                'Gemma4':    'Gemma4 (경량/빠름)',
+                            },
+                        ).props('dense outlined').style('font-size:12px; min-width:180px;')
+                        chat_llm_select.bind_value(rag, 'answer_llm')
 
             def _show_chat_layout():
                 """첫 질문 전송 시: 중앙 화면 → 상단 스크롤+하단 입력창 구조로 전환."""
                 if 'moved' not in _layout_state:
-                    input_row.move(bottom_bar)
+                    input_block.move(bottom_bar)
                     _layout_state['moved'] = True
                 center_wrap.style('display:none')
                 chat_layout.style('display:flex')
 
             def _show_center_layout():
                 """새 대화 시작 시: 하단 입력창 → 중앙 화면으로 복귀."""
-                input_row.move(center_input_slot)
+                input_block.move(center_input_slot)
                 _layout_state.pop('moved', None)
                 chat_layout.style('display:none')
                 center_wrap.style('display:flex')
