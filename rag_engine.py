@@ -1887,31 +1887,37 @@ recency_focus 판단 규칙 (매우 중요):
                           "(최신이 맨 위)으로 정렬되어 있습니다. 사용자가 '가장 최근'을 물었다면"
                           " 맨 위(가장 먼저 나오는) 항목을 기준으로 답하세요.")
 
-        # ★ 질문에 사내 코드(D1, BD30 등)가 있으면 물질명 매핑을 프롬프트에 명시한다.
-        #   검색 컨텍스트(트리플/문서)는 물질명(content_norm) 기준으로 되어 있어서,
-        #   이 매핑이 없으면 LLM 이 "질문의 코드"와 "컨텍스트의 물질명"을 별개로 보고
-        #   답변을 못 하거나 엉뚱하게 답할 수 있다.
+        # ★ 답변에서는 가능하면 물질명 대신 사내 코드명을 쓰도록 한다 (사용자 요청).
+        #   검색 컨텍스트(트리플/문서)는 물질명(content_norm) 기준으로 저장돼 있어서,
+        #   질문에 코드가 없어도 컨텍스트 안의 물질명 각각에 대응하는 코드가 있으면
+        #   그걸 알려줘야 LLM 이 답변을 코드로 바꿔 쓸 수 있다. 그래서 "질문에 등장한
+        #   코드"뿐 아니라 "컨텍스트에 실제로 등장하는 물질명 중 CODE_MAP 에 있는 것"도
+        #   함께 찾아서 매핑에 포함시킨다.
         code_map_found = _detect_codes(query)
+        if _NORMALIZE_AVAILABLE and _CODE_MAP:
+            for _code, _material in _CODE_MAP.items():
+                if _material and _material in combined_context and _code not in code_map_found:
+                    code_map_found[_code] = _material
         code_info = ""
         if code_map_found:
             mapping_lines = "\n".join(
-                f"- '{code}' 는 사내 코드명이며, 실제 물질명은 '{material}' 입니다."
+                f"- '{code}' ↔ '{material}'"
                 for code, material in code_map_found.items()
             )
             example_code, example_material = next(iter(code_map_found.items()))
             code_info = f"""
 
-[사내 코드명 ↔ 실제 물질명 매핑 — 반드시 확인]
-아래 사내 코드는 질문에 사용되었지만, 검색 컨텍스트(트리플/문서)는 물질명 기준으로
-제공됩니다. 코드명과 물질명이 동일한 대상을 가리킨다는 것을 확실히 인지하고,
-둘을 별개의 것으로 혼동하지 마세요.
+[사내 코드명 ↔ 실제 물질명 매핑]
+검색 컨텍스트는 물질명 기준으로 되어 있지만, 사내에서는 아래처럼 코드명으로 부르는
+경우가 많습니다. 코드명과 물질명이 같은 대상을 가리킨다는 것을 확실히 인지하세요.
 {mapping_lines}
 
-답변 규칙 (코드명 관련):
-- 답변 시작 부분에서 각 코드명과 실제 물질명의 관계를 사용자에게 명확히 알려주세요.
-  예: "'{example_code}'는 사내 코드로, 실제 물질명은 '{example_material}'입니다."
-- 이후 본문에서는 컨텍스트의 물질명을 기준으로 설명하되, 필요하면
-  "{example_code}({example_material})"처럼 코드와 물질명을 함께 표기해 혼동을 줄이세요."""
+답변 규칙 (코드명 관련 — 매우 중요):
+- ★ 답변 본문에서는 가능하면 물질명 대신 위 매핑의 사내 코드명을 사용하세요.
+  예: 컨텍스트에 '{example_material}'가 나와도 답변에는 '{example_code}'로 쓰세요.
+- 처음 그 물질을 언급할 때 한 번만 "{example_code}({example_material})"처럼 코드와
+  물질명을 함께 표기해 혼동을 줄이고, 이후로는 코드명만 써도 됩니다.
+- 위 매핑에 없는 물질은 코드가 없으므로 그대로 물질명을 쓰세요."""
 
         # ★ 디버그: LLM 프롬프트에 실제로 들어가는 "코드↔물질명 매핑" 섹션만 따로 출력.
         #   이 섹션이 비어 있으면(아래 (없음)) LLM 은 코드와 물질명을 연결하지 못한다.
