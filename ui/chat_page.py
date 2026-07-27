@@ -654,76 +654,76 @@ def build_chat_page(request: Request = None):
         )
 
         # ── chat area ────────────────────────────────────────────────────────────────────────────────────
-        # ★ 챗봇 첫 화면 UX: 대화가 없을 때는 입력창이 화면 중앙에 크게 떠 있다가,
-        #   첫 질문을 보내면 지금의 "상단 스크롤 + 하단 고정 입력창" 구조로 전환된다.
-        #   input_box/send_btn 은 인스턴스를 하나만 만들고, 두 레이아웃 사이를
-        #   ui 엘리먼트의 .move() 로 그대로 옮겨 재사용한다(값/이벤트 핸들러 유지).
+        # ★ 챗봇 첫 화면 UX: 대화가 없을 때는 인사말+입력창이 화면 중앙에 모여 있다가,
+        #   첫 질문을 보내면 "상단 스크롤 + 하단 고정 입력창" 구조로 전환된다.
+        #
+        #   ★★ 중요: 입력창을 두 컨테이너 사이로 .move() 하는 방식은 쓰지 않는다.
+        #   move() 는 클라이언트에서 엘리먼트를 재생성(re-mount)하기 때문에, 그 직후
+        #   파이썬에서 바꾼 상태(value='' 로 비우기, min-height props 변경 등)가
+        #   재생성 과정에 덮여 사라졌다 — "첫 질문이 입력창에 그대로 남는" 문제와
+        #   "높이가 안 바뀌는" 문제의 실제 원인이었다.
+        #   그래서 입력창은 DOM 상 항상 같은 자리에 두고, 위/아래 스페이서와
+        #   스크롤 영역의 display 만 토글해서 "중앙 → 하단" 배치를 만든다.
         with ui.element('div').style(
-            'flex:1; min-width:0; position:relative; overflow:hidden; background:#f8fafc;'
+            'flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:#f8fafc;'
         ):
-            # ── 중앙 시작 화면 (대화가 비어 있을 때) ──────────────────────────────────────
-            center_wrap = ui.element('div').style(
-                'position:absolute; inset:0; display:flex; flex-direction:column; '
-                'align-items:center; justify-content:center; gap:20px; padding:24px; '
-                'background:#f8fafc;'
-            )
-            with center_wrap:
-                with ui.element('div').style('display:flex; flex-direction:column; align-items:center; gap:8px;'):
-                    ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
-                        'width:48px; height:48px; font-size:24px;'
-                    )
-                    ui.label('KMap-Agent').style(
-                        'font-size:20px; font-weight:600; color:#1e293b;'
-                    )
-                    ui.label('논문·내부문서·데이터를 GraphRAG/RAG로 검색합니다. 무엇이든 질문해보세요!').style(
-                        'font-size:13px; color:#64748b;'
-                    )
-                center_input_slot = ui.element('div').style('width:100%; max-width:640px;')
+            # 중앙 정렬용 위쪽 스페이서 (대화 시작 후엔 숨김)
+            top_spacer = ui.element('div').style('flex:1;')
 
-            # ── 대화 화면 (첫 질문 이후) ─────────────────────────────────────────────────
-            chat_layout = ui.element('div').style(
-                'position:absolute; inset:0; display:none; flex-direction:column; overflow:hidden;'
+            # ── 인사말 (대화가 비어 있을 때만) ────────────────────────────────────────────
+            greeting = ui.element('div').style(
+                'flex-shrink:0; display:flex; flex-direction:column; align-items:center; '
+                'gap:8px; padding:0 24px 20px;'
             )
-            with chat_layout:
-                scroll_area = ui.scroll_area().style('flex:1; min-height:0; width:100%; background:#f8fafc;')
-                with scroll_area:
-                    chat_container = ui.element('div').style(
-                        'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%; width:100%;'
-                    )
-                    with chat_container:
-                        ui.element('div').style('flex:1;')   # 메시지가 적을 때 아래로 붙게 하는 스페이서
-
-                # ── bottom bar ─────────────────────────────────────────────────────────────────────────────
-                bottom_bar = ui.element('div').style(
-                    'flex-shrink:0; background:#f8fafc; border-top:1px solid #e2e8f0; padding:10px 16px 12px;'
+            with greeting:
+                ui.avatar(icon='auto_awesome', color='indigo-1', text_color='indigo').style(
+                    'width:48px; height:48px; font-size:24px;'
+                )
+                ui.label('KMap-Agent').style('font-size:20px; font-weight:600; color:#1e293b;')
+                ui.label('논문·내부문서·데이터를 GraphRAG/RAG로 검색합니다. 무엇이든 질문해보세요!').style(
+                    'font-size:13px; color:#64748b;'
                 )
 
-            # ── 입력창 (처음엔 중앙, 첫 질문 후 하단으로 이동) ────────────────────────────
-            with center_input_slot:
+            # ── 대화 스크롤 영역 (첫 질문 이후에만 표시) ──────────────────────────────────
+            scroll_area = ui.scroll_area().style(
+                'flex:1; min-height:0; width:100%; background:#f8fafc; display:none;'
+            )
+            with scroll_area:
+                chat_container = ui.element('div').style(
+                    'display:flex; flex-direction:column; gap:8px; padding:20px; min-height:100%; width:100%;'
+                )
+                with chat_container:
+                    ui.element('div').style('flex:1;')   # 메시지가 적을 때 아래로 붙게 하는 스페이서
+
+            # ── 입력창 영역 (DOM 위치 고정 — 절대 move 하지 않는다) ───────────────────────
+            bottom_bar = ui.element('div').style(
+                'flex-shrink:0; background:#f8fafc; padding:10px 16px 12px;'
+            )
+            with bottom_bar:
                 # ★ 입력창·모델 선택·전송 버튼을 하나의 "카드"로 통합한다 — 테두리는
                 #   바깥 카드 하나에만 두고 안쪽 요소들은 전부 borderless 로 만들어,
                 #   서로 다른 위젯이 따로 노는 느낌 없이 한 덩어리처럼 보이게 한다
                 #   (ChatGPT 류 채팅 입력창과 비슷한 구성).
                 with ui.element('div').style(
-                    'display:flex; flex-direction:column; width:100%; background:white; '
-                    'border:1px solid #e2e8f0; border-radius:20px; padding:10px 14px 8px; '
-                    'box-shadow:0 1px 3px rgba(0,0,0,0.05); transition:border-color 0.15s;'
-                ).classes('input-card') as input_block:
+                    'display:flex; flex-direction:column; width:100%; max-width:720px; margin:0 auto; '
+                    'background:white; border:1px solid #e2e8f0; border-radius:20px; '
+                    'padding:10px 14px 8px; box-shadow:0 1px 3px rgba(0,0,0,0.05); '
+                    'transition:border-color 0.15s;'
+                ).classes('input-card'):
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요')
                         .classes('w-full text-sm')
                         .style('font-size:14px;')
-                        # ★ 중앙 화면(처음)에서는 2줄 정도 높이(min-height:44px)로 시작한다.
-                        #   하단으로 이동하면 _show_chat_layout() 에서 1줄 높이로 줄이고,
-                        #   실제 줄바꿈이 들어가면 autogrow 가 다시 키워준다.
-                        .props('borderless dense autogrow input-style="min-height:44px"')
+                        # ★ 처음부터 1줄 높이로 시작하고, 내용이 늘어나면(줄바꿈/긴 문장)
+                        #   autogrow 가 자동으로 키워준다.
+                        .props('borderless dense autogrow input-style="min-height:24px"')
                         # ★ Shift 없는 순수 Enter 의 줄바꿈 기본동작만 막는다. Vue 템플릿에
                         #   정적으로 붙는 속성이라(=엘리먼트 생성과 동시에 적용) 렌더링 이후에
                         #   JS 를 주입하는 방식과 달리 타이밍 경쟁이 없다. Shift+Enter 는
                         #   $event.shiftKey 가 true 라 이 조건에 안 걸려 자연스럽게 줄바꿈된다.
                         .props('''@keydown.enter="$event.shiftKey || $event.preventDefault()"''')
                     )
-                    # ── 하단 툴바: 왼쪽에 모델 선택, 오른쪽에 전송 버튼 ──────────────────
+                    # ── 카드 하단 툴바: 왼쪽에 모델 선택, 오른쪽에 전송 버튼 ──────────────
                     with ui.element('div').style(
                         'display:flex; align-items:center; justify-content:space-between; width:100%; margin-top:2px;'
                     ):
@@ -751,26 +751,24 @@ def build_chat_page(request: Request = None):
                             )
                         )
 
+            # 중앙 정렬용 아래쪽 스페이서 (대화 시작 후엔 숨김)
+            bottom_spacer = ui.element('div').style('flex:1;')
+
             def _show_chat_layout():
-                """첫 질문 전송 시: 중앙 화면 → 상단 스크롤+하단 입력창 구조로 전환."""
-                if 'moved' not in _layout_state:
-                    input_block.move(bottom_bar)
-                    _layout_state['moved'] = True
-                # ★ 하단으로 옮긴 뒤에는 처음에 1줄만 보이도록 줄인다. 실제 줄바꿈이
-                #   들어가면 autogrow 가 다시 키워준다 (중앙 화면일 땐 2줄로 큼직하게).
-                input_box.props('input-style="min-height:24px"')
-                center_wrap.style('display:none')
-                chat_layout.style('display:flex')
+                """첫 질문 전송 시: 중앙 배치 → 상단 스크롤 + 하단 입력창 배치로 전환."""
+                top_spacer.style('display:none')
+                bottom_spacer.style('display:none')
+                greeting.style('display:none')
+                scroll_area.style('display:block')
+                bottom_bar.style('border-top:1px solid #e2e8f0')
 
             def _show_center_layout():
-                """새 대화 시작 시: 하단 입력창 → 중앙 화면으로 복귀."""
-                input_block.move(center_input_slot)
-                _layout_state.pop('moved', None)
-                input_box.props('input-style="min-height:44px"')
-                chat_layout.style('display:none')
-                center_wrap.style('display:flex')
-
-            _layout_state: dict = {}
+                """새 대화 시작 시: 다시 인사말 + 중앙 입력창 배치로 복귀."""
+                scroll_area.style('display:none')
+                greeting.style('display:flex')
+                top_spacer.style('display:block')
+                bottom_spacer.style('display:block')
+                bottom_bar.style('border-top:none')
 
         # ── helper: conversation list refresh ───────────────────────────────────────────────────────
         def _refresh_conv_list():
@@ -870,13 +868,9 @@ def build_chat_page(request: Request = None):
                 state.conversations.append(conv)
                 state.active_conv_id = conv['id']
                 _refresh_conv_list()
-                _show_chat_layout()   # ★ 첫 질문: 중앙 화면 → 대화 화면으로 전환
-                # ★ input_block.move() 로 입력창 DOM 이 재배치되면서, 그 전에 비워둔 값이
-                #   화면에 다시 첫 질문 텍스트로 남아 보이는 문제가 있었다. 이동 직후
-                #   한 번 더 명시적으로 비우고 .update() 로 클라이언트에 강제 재동기화한다
-                #   (move 로 인한 재마운트 시점과 값 갱신 메시지의 순서가 꼬여도 확실히 반영됨).
-                input_box.value = ''
-                input_box.update()
+                _show_chat_layout()   # ★ 첫 질문: 중앙 배치 → 대화 배치로 전환
+                # (입력창은 DOM 위치가 고정이라 재생성되지 않으므로, 위에서 한 번
+                #  비운 value='' 가 그대로 유지된다 — 추가 처리 불필요)
 
             # ── user bubble ─────────────────────────────────────────────────────────────────────────────────────
             user_msg = {'role': 'user', 'content': query, 'dataset': current_dataset}
