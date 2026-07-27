@@ -404,9 +404,40 @@ def build_chat_page(request: Request = None):
         /* sidebar resize handle */
         #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
 
-        /* 대화 목록: 점3개 메뉴 버튼은 해당 줄에 마우스를 올렸을 때만 보이게 */
-        .conv-row .conv-menu { opacity: 0; transition: opacity 0.15s; }
+        /* ── 대화 목록 ─────────────────────────────────────────────────────────
+           색상 톤: 배경(#f1f5f9 slate-100)과 조화되도록 중립 슬레이트를 기본으로 쓰고,
+           선택된 항목만 아주 옅은 인디고로 은은하게 강조한다(진한 색 반전은 촌스러워
+           보여서 피함). */
+        .conv-title {
+            font-size: 12.5px !important;
+            padding: 4px 8px !important;
+            min-height: 0 !important;
+            color: #64748b !important;          /* slate-500 */
+            font-weight: 400 !important;
+            transition: background-color 0.12s, color 0.12s;
+        }
+        .conv-title:hover { background: #e2e8f0 !important; color: #334155 !important; }
+        .conv-title.conv-active {
+            background: #e0e7ff !important;     /* indigo-100 (옅게) */
+            color: #4338ca !important;          /* indigo-700 */
+            font-weight: 500 !important;
+        }
+        /* 점3개 메뉴 버튼: 해당 줄에 마우스를 올렸을 때만 보이게 + 아이콘 크기 축소.
+           (버튼의 font-size 로는 Quasar 의 .q-icon 크기가 안 바뀌어 직접 지정한다) */
+        .conv-row .conv-menu {
+            opacity: 0;
+            transition: opacity 0.15s;
+            color: #94a3b8 !important;          /* slate-400 */
+            width: 18px; height: 18px;
+            min-width: 18px; min-height: 18px;
+            padding: 0 !important;
+        }
+        .conv-row .conv-menu .q-icon { font-size: 14px !important; }
         .conv-row:hover .conv-menu { opacity: 1; }
+        .conv-row .conv-menu:hover { color: #475569 !important; }   /* slate-600 */
+        /* 메뉴 항목 */
+        .conv-menu-item { font-size: 12.5px !important; min-height: 32px !important; color: #475569; }
+        .conv-menu-danger { color: #dc2626 !important; }            /* red-600 */
 
         /* 통합 입력창 카드: 포커스 시 은은하게 강조 */
         .input-card:focus-within {
@@ -808,38 +839,35 @@ def build_chat_page(request: Request = None):
                         (
                             # ★ no-caps: Quasar 버튼은 기본적으로 text-transform:uppercase 라
                             #   대화 제목의 영문이 전부 대문자로 바뀌어 버렸다. 원문 그대로 표시.
+                            #   색상은 tailwind 클래스 대신 인라인으로 지정해(=Quasar 기본
+                            #   스타일에 확실히 우선) 톤을 정밀하게 맞춘다.
                             ui.button(('★ ' if is_fav else '') + title,
                                       on_click=lambda c=conv: _load_conversation(c))
                             .props('flat dense no-caps align=left')
-                            .classes(
-                                'flex-grow text-sm rounded px-2 py-1 truncate text-left hover-btn ' +
-                                ('bg-indigo-100 text-indigo-800' if is_active else 'text-slate-500 hover:bg-slate-200')
-                            )
+                            .classes('flex-grow rounded truncate text-left conv-title'
+                                     + (' conv-active' if is_active else ''))
                             .style('min-width:0; text-transform:none;')
                         )
                         with (
                             ui.button(icon='more_vert')
                             .props('flat round dense size=xs')
                             .classes('conv-menu')
-                            .style(
-                                'color:#94a3b8; flex-shrink:0; width:20px; height:20px; '
-                                'min-width:20px; min-height:20px; font-size:11px;'
-                            )
+                            .style('flex-shrink:0;')
                         ):
                             with ui.menu().props('auto-close'):
                                 ui.menu_item(
                                     '즐겨찾기 해제' if is_fav else '즐겨찾기 추가',
                                     on_click=lambda c=conv, f=is_fav: _toggle_favorite(c, f),
-                                ).classes('text-sm')
+                                ).classes('conv-menu-item')
                                 ui.menu_item(
                                     '제목 변경',
                                     on_click=lambda c=conv: _rename_conversation(c),
-                                ).classes('text-sm')
+                                ).classes('conv-menu-item')
                                 ui.separator()
                                 ui.menu_item(
                                     '삭제',
                                     on_click=lambda c=conv: _delete_conversation(c),
-                                ).classes('text-sm text-red-600')
+                                ).classes('conv-menu-item conv-menu-danger')
 
         def _toggle_favorite(conv: dict, currently_fav: bool):
             conversation_store.set_favorite(conv['id'], user_key, not currently_fav)
