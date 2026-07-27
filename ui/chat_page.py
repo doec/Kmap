@@ -509,6 +509,14 @@ def build_chat_page(request: Request = None):
             border-color: #a5b4fc !important;
             box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important;
         }
+        /* ★ 입력창이 하단으로 내려간 상태(대화 중)에서만 내부 상하 여백을 줄인다.
+           중앙 배치(첫 화면)에서는 원래의 여유 있는 여백을 유지한다. */
+        .input-card.input-card-compact { padding: 4px 14px 3px !important; }
+        .input-card.input-card-compact .q-field__control,
+        .input-card.input-card-compact .q-field__marginal { min-height: 0 !important; }
+        .input-card.input-card-compact .q-field__native { padding-top: 2px !important; padding-bottom: 2px !important; }
+        /* 카드 하단 툴바(모델 선택 + 전송 버튼)도 조금 더 붙인다 */
+        .input-card.input-card-compact .q-select .q-field__control { min-height: 24px !important; }
 
         /* 인라인 수식이 본문 글자 크기와 어긋나지 않게 */
         .ai-bubble mjx-container { font-size: inherit !important; }
@@ -826,12 +834,13 @@ def build_chat_page(request: Request = None):
                 #   바깥 카드 하나에만 두고 안쪽 요소들은 전부 borderless 로 만들어,
                 #   서로 다른 위젯이 따로 노는 느낌 없이 한 덩어리처럼 보이게 한다
                 #   (ChatGPT 류 채팅 입력창과 비슷한 구성).
-                with ui.element('div').style(
+                input_card = ui.element('div').style(
                     'display:flex; flex-direction:column; width:100%; max-width:720px; margin:0 auto; '
                     'background:white; border:1px solid #e2e8f0; border-radius:20px; '
                     'padding:10px 14px 8px; box-shadow:0 1px 3px rgba(0,0,0,0.05); '
-                    'transition:border-color 0.15s;'
-                ).classes('input-card'):
+                    'transition:border-color 0.15s, padding 0.15s;'
+                ).classes('input-card')
+                with input_card:
                     input_box = (
                         ui.textarea(placeholder='질문을 입력하세요')
                         .classes('w-full text-sm kmap-chat-input')
@@ -882,7 +891,10 @@ def build_chat_page(request: Request = None):
                 bottom_spacer.style('display:none')
                 greeting.style('display:none')
                 scroll_area.style('display:block')
-                bottom_bar.style('border-top:1px solid #e2e8f0')
+                bottom_bar.style('border-top:1px solid #e2e8f0; padding:6px 16px 8px')
+                # ★ 하단에 있을 때만 입력창 내부 상하 여백을 줄인다(중앙 배치일 때는
+                #   여유 있게 보이는 편이 좋아 원래 여백을 유지).
+                input_card.classes(add='input-card-compact')
 
             def _show_center_layout():
                 """새 대화 시작 시: 다시 인사말 + 중앙 입력창 배치로 복귀."""
@@ -890,7 +902,8 @@ def build_chat_page(request: Request = None):
                 greeting.style('display:flex')
                 top_spacer.style('display:block')
                 bottom_spacer.style('display:block')
-                bottom_bar.style('border-top:none')
+                bottom_bar.style('border-top:none; padding:10px 16px 12px')
+                input_card.classes(remove='input-card-compact')
 
         # ── helper: conversation list refresh ───────────────────────────────────────────────────────
         def _refresh_conv_list():
