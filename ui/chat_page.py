@@ -405,18 +405,16 @@ def build_chat_page(request: Request = None):
         #kmap-sidebar-resizer:hover, #kmap-sidebar-resizer.resizing { background: #a5b4fc !important; }
 
         /* ── 대화 목록 ─────────────────────────────────────────────────────────
-           색상 톤: 배경(#f1f5f9 slate-100)과 조화되도록 중립 슬레이트를 기본으로 쓰고,
-           선택된 항목만 아주 옅은 인디고로 은은하게 강조한다(진한 색 반전은 촌스러워
-           보여서 피함). */
+           색상 톤: 배경(#f1f5f9 slate-100)과 조화되도록 회색 계열로만 구성한다. */
         .conv-title {
             font-size: 12.5px !important;
             padding: 4px 8px !important;
             min-height: 0 !important;
-            color: #64748b !important;          /* slate-500 */
+            color: #334155 !important;          /* slate-700 (진한 회색) */
             font-weight: 400 !important;
             transition: background-color 0.12s, color 0.12s;
         }
-        .conv-title:hover { background: #e9eef4 !important; color: #475569 !important; }
+        .conv-title:hover { background: #e9eef4 !important; color: #1e293b !important; }
         /* 선택된 대화: 파란색 계열 대신 한 단계 진한 회색으로 강조 */
         .conv-title.conv-active {
             background: #dde3ea !important;
@@ -451,10 +449,12 @@ def build_chat_page(request: Request = None):
             transition: background-color 0.12s, color 0.12s;
         }
         .mode-btn:hover { background: #e9eef4 !important; color: #334155 !important; }
+        /* 선택된 모드: 밝은 회색 배경 + 진한 회색 글자 (테두리로 선택 상태를 분명히) */
         .mode-btn.mode-active {
-            background: #475569 !important;     /* slate-600 (진한 회색) */
-            color: #ffffff !important;
-            font-weight: 500 !important;
+            background: #e2e8f0 !important;
+            color: #1e293b !important;
+            font-weight: 600 !important;
+            box-shadow: inset 0 0 0 1px #cbd5e1 !important;
         }
 
         /* 점3개 메뉴 버튼: 해당 줄에 마우스를 올렸을 때만 보이게 + 아이콘 크기 축소.
