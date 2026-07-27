@@ -514,14 +514,15 @@ def build_chat_page(request: Request = None):
         .input-card.input-card-compact { padding: 4px 14px 3px !important; }
         .input-card.input-card-compact .q-field__control,
         .input-card.input-card-compact .q-field__marginal { min-height: 0 !important; }
-        .input-card.input-card-compact .q-field__native { padding-top: 2px !important; padding-bottom: 2px !important; }
+        .input-card.input-card-compact .q-field__native { padding-top: 2px !important; padding-bottom: 0 !important; }
         /* ★ Quasar 는 입력창 아래에 힌트/에러 메시지용 공간(.q-field__bottom)을 항상
            예약해 둔다. 우리는 힌트를 쓰지 않으므로 이 빈 공간이 그대로 "입력창과
            모델 선택 드롭다운 사이의 불필요한 여백"으로 보였다 — 하단 배치에서 제거해
            드롭다운이 카드 아래쪽에 자연스럽게 붙게 한다. */
         .input-card.input-card-compact .q-textarea .q-field__bottom { display: none !important; }
-        /* 카드 하단 툴바(모델 선택 + 전송 버튼)도 조금 더 붙인다 */
-        .input-card.input-card-compact .input-toolbar { margin-top: 0 !important; }
+        /* 카드 하단 툴바(모델 선택 + 전송 버튼)도 조금 더 붙인다
+           (입력한 텍스트와 드롭다운 사이 간격을 살짝 더 좁히기 위해 음수 마진) */
+        .input-card.input-card-compact .input-toolbar { margin-top: -3px !important; }
         .input-card.input-card-compact .q-select .q-field__control { min-height: 24px !important; }
         .input-card.input-card-compact .q-select .q-field__bottom { display: none !important; }
 
