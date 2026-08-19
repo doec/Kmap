@@ -433,7 +433,10 @@ _OUTPUT_ORDER = [REPORTS_DATASET, CONFLUENCE_DATASET, PAPERS_DATASET]
 # 데이터셋 레이블(:PapersDB / :ReportsDB)을 공유하므로,
 # MATCH (s:PapersDB)-[r]->(o:PapersDB) 같은 패턴이 이 구조 관계까지 잡아버린다.
 # 이들은 "의미 트리플"이 아니라 출처 연결이므로, 검색 시 관계 타입으로 제외한다.
-_STRUCTURAL_RELS = ['FROM_PAPER', 'FROM_DOC']
+#   ★ HAS_CHUNK / NEXT_CHUNK 도 구조 관계다: Document 와 Chunk 가 둘 다 :Confluence
+#     라벨을 공유하므로, MATCH (s:Confluence)-[r]->(o:Confluence) 패턴이 이 관계들까지
+#     "의미 트리플"로 잡아버린다. 트리플 검색에서 제외한다.
+_STRUCTURAL_RELS = ['FROM_PAPER', 'FROM_DOC', 'HAS_CHUNK', 'NEXT_CHUNK']
 
 
 class GraphRAG:
