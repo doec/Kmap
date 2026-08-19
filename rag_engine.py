@@ -372,6 +372,12 @@ DATASETS: dict = {
         'doc_body_label':   '내용',                    # LLM 컨텍스트에 표기할 본문 레이블
         # ReportsDB 와 마찬가지로 물질 코드가 섞일 수 있으므로 질의 정규화 적용
         'normalize_query':  True,
+        # ★ 청킹 도입: 페이지 1개가 여러 청크로 쪼개져 저장되므로 doc_id 는 더 이상
+        #   유니크 키가 아니다(같은 doc_id 를 가진 청크 노드가 여러 개). 유니크 키는
+        #   chunk_id 이며, 문서 조회/중복 제거를 이 키로 해야 한다 — doc_id 로 하면
+        #   한 페이지의 청크들이 하나로 뭉개져 대부분의 내용이 사라진다.
+        'doc_key':          'chunk_id',
+        'chunked':          True,
     },
 }
 
@@ -1147,12 +1153,34 @@ recency_focus 판단 규칙 (매우 중요):
         parts: list[str] = []
         params: dict = {}
         if cfg.get('date_as_week') and (yw_from or yw_to):
+            # ★ Confluence 는 이제 두 소스가 섞여 있다:
+            #     - 주간보고   : year_week 값 있음 (주차로 판단)
+            #     - 서브페이지 : year_week 가 빈 값이고 date(last_modified)만 있음
+            #   예전처럼 year_week 만으로 거르면 서브페이지가 전부 탈락하므로,
+            #   "year_week 이 있으면 주차 범위로, 없으면 date 범위로" 판단한다.
+            wk: list[str] = []
             if yw_from:
-                parts.append(f"toLower({alias}.year_week) >= toLower($yw_from)")
+                wk.append(f"toLower({alias}.year_week) >= toLower($yw_from)")
                 params['yw_from'] = yw_from
             if yw_to:
-                parts.append(f"toLower({alias}.year_week) <= toLower($yw_to)")
+                wk.append(f"toLower({alias}.year_week) <= toLower($yw_to)")
                 params['yw_to'] = yw_to
+            week_cond = (f"(COALESCE({alias}.year_week, '') <> '' AND "
+                         f"{' AND '.join(wk)})")
+
+            dt: list[str] = []
+            if date_from:
+                dt.append(f"{alias}.date >= $date_from")
+                params['date_from'] = date_from
+            if date_to:
+                dt.append(f"{alias}.date <= $date_to")
+                params['date_to'] = date_to
+            if dt:
+                date_cond = (f"(COALESCE({alias}.year_week, '') = '' AND "
+                             f"{' AND '.join(dt)})")
+                parts.append(f"({week_cond} OR {date_cond})")
+            else:
+                parts.append(week_cond)
         else:
             if date_from:
                 parts.append(f"{alias}.date >= $date_from")
@@ -1194,11 +1222,14 @@ recency_focus 판단 규칙 (매우 중요):
             cfg, 'node', date_from, date_to, yw_from, yw_to
         )
 
+        # ★ 청킹된 데이터셋(Confluence)은 유니크 키가 chunk_id 이므로 그 값을 돌려준다
+        #   (doc_id 를 돌려주면 이후 조회/중복 제거에서 청크들이 하나로 뭉개진다).
+        doc_key = cfg.get('doc_key', 'doc_id')
         query_str = f"""
             CALL db.index.vector.queryNodes($index, $limit, $q_emb)
             YIELD node, score
             WHERE score > $score_min {date_filter}
-            RETURN node.doc_id AS doc_id, score
+            RETURN node.{doc_key} AS doc_id, score
             ORDER BY score DESC
         """
         params = {
@@ -1270,11 +1301,12 @@ recency_focus 판단 규칙 (매우 중요):
             cfg, 'node', date_from, date_to, yw_from, yw_to
         )
 
+        doc_key = cfg.get('doc_key', 'doc_id')   # 청킹 데이터셋은 chunk_id
         query_str = f"""
             CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
             YIELD node, score
             WHERE true {date_filter}
-            RETURN node.doc_id AS doc_id, score
+            RETURN node.{doc_key} AS doc_id, score
             ORDER BY score DESC
         """
         doc_ids: list[str] = []
@@ -1324,12 +1356,17 @@ recency_focus 판단 규칙 (매우 중요):
         )
         params = {'keywords': keywords, 'limit': limit, **date_params}
 
+        doc_key = cfg.get('doc_key', 'doc_id')   # 청킹 데이터셋은 chunk_id
+        # ★ Confluence 새 스키마는 작성자를 researcher 필드에 담는다(기존은 author).
+        #   두 필드 중 존재하는 쪽에서 찾도록 COALESCE 로 합쳐 검색한다.
         query_str = f"""
             MATCH (m:{doc_label})
-            WHERE m.author IS NOT NULL
-              AND any(kw IN $keywords WHERE toLower(m.author) CONTAINS toLower(kw))
+            WHERE (m.author IS NOT NULL OR m.researcher IS NOT NULL)
+              AND any(kw IN $keywords
+                      WHERE toLower(COALESCE(m.author, '')) CONTAINS toLower(kw)
+                         OR toLower(COALESCE(m.researcher, '')) CONTAINS toLower(kw))
               {date_filter}
-            RETURN m.doc_id AS doc_id
+            RETURN m.{doc_key} AS doc_id
             ORDER BY m.date DESC
             LIMIT $limit
         """
@@ -1380,10 +1417,11 @@ recency_focus 판단 규칙 (매우 중요):
         else:
             return []
 
+        doc_key = cfg.get('doc_key', 'doc_id')   # 청킹 데이터셋은 chunk_id
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE {where}
-            RETURN m.doc_id AS doc_id
+            RETURN m.{doc_key} AS doc_id
             ORDER BY m.date DESC
             LIMIT $limit
         """
@@ -1407,11 +1445,13 @@ recency_focus 판단 규칙 (매우 중요):
         소수만 나오는 문제가 있었다. 이 채널은 그 기간에 해당하는 문서를 관련도와
         무관하게 모두 담아준다(컨텍스트 폭주 방지를 위해 상한만 둠).
 
-        ★ date_as_week 데이터셋(ReportsDB/Confluence)은 _doc_week_retrieve(E채널)가
-          이미 같은 역할을 year_week 기준으로 담당하므로 여기서는 제외한다.
+        ★ date_as_week 데이터셋(ReportsDB/Confluence)에서 year_week 를 가진 문서는
+          _doc_week_retrieve(E채널)가 주차 기준으로 이미 담당하므로 중복을 피해 제외한다.
+          단 Confluence 서브페이지처럼 year_week 가 비어 있고 date 만 있는 레코드는
+          E채널이 잡을 수 없으므로, 이 채널이 date 기준으로 채워준다.
         """
         doc_label = cfg.get('doc_label')
-        if not doc_label or cfg.get('date_as_week') or not (date_from or date_to):
+        if not doc_label or not (date_from or date_to):
             return []
 
         conds = []
@@ -1422,11 +1462,15 @@ recency_focus 판단 규칙 (매우 중요):
         if date_to:
             conds.append("m.date <= $date_to")
             params['date_to'] = date_to
+        if cfg.get('date_as_week'):
+            # year_week 가 있는 문서는 E채널 담당 → 여기서는 없는 것만
+            conds.append("COALESCE(m.year_week, '') = ''")
 
+        doc_key = cfg.get('doc_key', 'doc_id')   # 청킹 데이터셋은 chunk_id
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE m.date IS NOT NULL AND {" AND ".join(conds)}
-            RETURN m.doc_id AS doc_id
+            RETURN m.{doc_key} AS doc_id
             ORDER BY m.date DESC
             LIMIT $limit
         """
@@ -1485,17 +1529,37 @@ recency_focus 판단 규칙 (매우 중요):
             body_expr = f"COALESCE(m.content, m.{body_field})"
         else:
             body_expr = f"COALESCE(m.{body_field}, m.content)"
-        order_clause = "ORDER BY m.date DESC" if recency_focus else ""
+        # ★ 청킹 대응:
+        #   - 조회 키: 청킹 데이터셋은 chunk_id 가 유니크 키다. 단, 트리플에서 나온
+        #     출처 id(A 채널)는 doc_id 라서, 두 경우를 모두 받아들이도록 OR 로 매칭한다.
+        #   - 정렬: 같은 페이지의 청크들이 흩어지지 않고 순서대로 붙어 나오도록
+        #     doc_id, chunk_index 로 정렬한다(최신순 요청이면 date 를 앞에 둔다).
+        #   - title/author 는 새 스키마의 page_title/researcher 도 함께 받는다.
+        doc_key = cfg.get('doc_key', 'doc_id')
+        is_chunked = bool(cfg.get('chunked'))
+        if doc_key != 'doc_id':
+            where_clause = f"m.{doc_key} IN $ids OR m.doc_id IN $ids"
+        else:
+            where_clause = "m.doc_id IN $ids"
+        if is_chunked:
+            order_clause = ("ORDER BY m.date DESC, m.doc_id, m.chunk_index"
+                            if recency_focus else "ORDER BY m.doc_id, m.chunk_index")
+        else:
+            order_clause = "ORDER BY m.date DESC" if recency_focus else ""
         query_str = f"""
             MATCH (m:{doc_label})
-            WHERE m.doc_id IN $ids
-            RETURN m.doc_id     AS doc_id,
-                   m.title      AS title,
-                   m.author     AS author,
+            WHERE {where_clause}
+            RETURN m.{doc_key}  AS uid,
+                   m.doc_id     AS doc_id,
+                   COALESCE(m.title, m.page_title)   AS title,
+                   COALESCE(m.author, m.researcher)  AS author,
                    m.date       AS date,
                    m.source_url AS source_url,
                    m.journal    AS journal,
                    m.year_week  AS year_week,
+                   m.title_path   AS title_path,
+                   m.chunk_index  AS chunk_index,
+                   m.total_chunks AS total_chunks,
                    {body_expr} AS body
             {order_clause}
         """
@@ -1509,19 +1573,24 @@ recency_focus 판단 규칙 (매우 중요):
         if not docs:
             return ""
 
-        # ★ 중복 제거: 같은 doc_id 에 메타 노드가 여러 개이거나(DB 중복),
-        #   제목+출처가 동일한 사실상 같은 문서가 여러 건 저장돼 있으면 표/목록에
-        #   같은 내용이 두 번 나온다. doc_id 기준으로 먼저 걸러내고, doc_id 가 달라도
+        # ★ 중복 제거: 같은 노드가 여러 채널에서 중복으로 잡히거나(DB 중복), 제목+출처가
+        #   동일한 사실상 같은 문서가 여러 건 저장돼 있으면 같은 내용이 두 번 나온다.
+        #   유니크 키(청킹 데이터셋은 chunk_id)로 먼저 걸러내고, 그 키가 달라도
         #   제목+출처가 완전히 같으면 같은 문서로 보고 한 번만 남긴다(순서 유지).
+        #   ★★ 청킹 데이터셋에서는 "제목+출처" 기준을 쓰면 한 페이지의 모든 청크가
+        #   같은 제목·같은 URL 이라 전부 하나로 뭉개져 내용 대부분이 사라진다.
+        #   그래서 청킹된 경우 이 2차 기준에 청크 식별자를 포함시킨다.
         deduped = []
         seen_ids: set = set()
         seen_keys: set = set()
         for d in docs:
-            did = d.get('doc_id')
+            did = d.get('uid') or d.get('doc_id')
             if did and did in seen_ids:
                 continue
             # 제목이 같아도 주차/출처가 다르면 다른 문서로 취급(오검출 방지)
             key = (d.get('title'), d.get('source_url'), d.get('year_week'))
+            if is_chunked:
+                key = key + (d.get('doc_id'), d.get('chunk_index'))
             has_key = any(k is not None for k in key)
             if has_key and key in seen_keys:
                 continue
@@ -1560,9 +1629,17 @@ recency_focus 판단 규칙 (매우 중요):
             else:
                 date_bit = d.get('date')
             meta_bits = [b for b in (d.get('author'), d.get('journal'), date_bit) if b]
+            # ★ 청킹된 문서는 "이 내용이 문서의 몇 번째 조각인지"를 알려준다 —
+            #   그래야 LLM 이 잘린 문맥을 문서 전체로 오해하지 않는다.
+            #   total_chunks == 1 이면 청킹되지 않은 문서이므로 표기하지 않는다.
+            total_chunks = d.get('total_chunks')
+            if total_chunks and total_chunks > 1:
+                meta_bits.append(f"{(d.get('chunk_index') or 0) + 1}/{total_chunks} 부분")
             if meta_bits:
                 header += f" ({', '.join(meta_bits)})"
             lines.append(header)
+            if d.get('title_path'):
+                lines.append(f"  경로: {d['title_path']}")
             if d.get('source_url'):
                 lines.append(f"  출처: {d['source_url']}")
             if body:
