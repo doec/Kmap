@@ -557,6 +557,7 @@ class GraphRAG:
   "date_from": "YYYY-MM-DD 또는 null",
   "date_to": "YYYY-MM-DD 또는 null",
   "recency_focus": true 또는 false,
+  "oldest_focus": true 또는 false,
   "year_week": "YYYY-WNN 또는 null",
   "year_week_from": "YYYY-WNN 또는 null",
   "year_week_to": "YYYY-WNN 또는 null",
@@ -640,6 +641,17 @@ recency_focus 판단 규칙 (매우 중요):
 - 구체적 기간이 명시되어 date_from/date_to 가 채워진 경우에도, 그 기간 안에서 역시
   최신순 정렬이 자연스러우므로 recency_focus: true 로 표시하세요.
 - 날짜/최근 관련 언급이 전혀 없으면 → false
+
+oldest_focus 판단 규칙 (매우 중요):
+- "가장 오래된", "제일 오래된", "최초의", "맨 처음", "가장 먼저 작성된" 처럼 시간상
+  가장 앞선(과거) 자료를 찾아달라는 의도가 있으면 → true
+- recency_focus 와 정반대 방향이므로 둘 다 true 가 될 수 없습니다 — oldest_focus 가
+  true 면 recency_focus 는 반드시 false 로 두세요.
+- 위와 같이 oldest_focus 가 true 인 경우, 검색 결과를 confidence(신뢰도) 순이 아니라
+  date(날짜) 오름차순(과거 → 현재)으로 정렬해야 하므로 반드시 true 로 표시하세요.
+- 구체적 기간이 명시되어 date_from/date_to 가 채워진 경우에도, 그 기간 중 "가장
+  오래된 것"을 찾는 의도면 oldest_focus: true 로 표시하세요.
+- 날짜/오래된 것 관련 언급이 전혀 없으면 → false
 
 키워드 형식 규칙 (매우 중요 — 이 형식을 안 지키면 검색이 실패합니다):
 - keywords 는 반드시 "순수한 단어/구를 쉼표로 나열"한 문자열이어야 합니다.
@@ -764,12 +776,19 @@ recency_focus 판단 규칙 (매우 중요):
 
             author_names = (parsed.get('author_names') or '').strip()
 
+            # ★ recency_focus/oldest_focus 는 정반대 방향 정렬이라 둘 다 true 면
+            #   모순이다. LLM 이 실수로 둘 다 true 를 내놓는 경우를 방어적으로
+            #   처리한다 — recency_focus(최신)를 우선시킨다(더 흔한 요청이므로).
+            recency_focus = bool(parsed.get('recency_focus', False))
+            oldest_focus  = bool(parsed.get('oldest_focus', False)) and not recency_focus
+
             return {
                 'keywords':        parsed.get('keywords', query),
                 'author_names':    author_names,
                 'date_from':       date_from,
                 'date_to':         date_to,
-                'recency_focus':   bool(parsed.get('recency_focus', False)),
+                'recency_focus':   recency_focus,
+                'oldest_focus':    oldest_focus,
                 'year_week':       year_week,
                 'year_week_from':  year_week_from,
                 'year_week_to':    year_week_to,
@@ -785,7 +804,7 @@ recency_focus 판단 규칙 (매우 중요):
             self._dbg(0, f"[Debug] 키워드 추출 실패 → 원본 질문으로 폴백 (날짜/저자 등 추출 없이 검색): "
                          f"{reason}" + (f" / 원본: {result}" if result is not None else ""))
             return {'keywords': query, 'author_names': '', 'date_from': None, 'date_to': None,
-                    'recency_focus': False, 'year_week': None,
+                    'recency_focus': False, 'oldest_focus': False, 'year_week': None,
                     'year_week_from': None, 'year_week_to': None,
                     'target_datasets': list(DATASETS.keys()),
                     'full_content': False,
@@ -888,18 +907,20 @@ recency_focus 판단 규칙 (매우 중요):
     def _text_retrieve_raw(self, keywords_str: str, dataset: str, cfg: dict,
                            limit: int, date_from: str, date_to: str,
                            allowed_rels: list[str] = None,
-                           recency_focus: bool = False) -> list[dict]:
+                           recency_focus: bool = False,
+                           oldest_focus: bool = False) -> list[dict]:
         """
         allowed_rels 가 주어지면 그 관계 타입으로만 결과를 제한한다.
         (1차 검색에서는 None 으로 호출해 관계 타입 무관하게 키워드 매칭하고,
          2-hop 확장에서는 cfg['hop2_relations'] 를 넘겨 인과·성능 계열로만 제한한다.)
 
-        recency_focus 가 True 이고 이 데이터셋이 날짜(date)를 지원하면, 정렬 기준을
-        cfg 의 기본값(confidence DESC) 대신 date DESC 로 바꾼다.
+        recency_focus/oldest_focus 가 True 이고 이 데이터셋이 날짜(date)를 지원하면,
+        정렬 기준을 cfg 의 기본값(confidence DESC) 대신 date DESC(최신)/ASC(가장 오래된)로
+        바꾼다.
         ★ 이건 Cypher ORDER BY + LIMIT 단계에서 바로 적용되어야 의미가 있다.
           결과를 다 가져온 뒤 Python 에서 재정렬하면, 애초에 confidence 기준으로
-          LIMIT 에 걸려 짤린 "진짜로 최신인데 confidence 가 낮은" 트리플을
-          영영 놓치게 된다.
+          LIMIT 에 걸려 짤린 "진짜로 최신(또는 가장 오래된)인데 confidence 가 낮은"
+          트리플을 영영 놓치게 된다.
         """
         keywords      = _split_keywords(keywords_str)
         return_fields = cfg['return_fields']
@@ -916,6 +937,8 @@ recency_focus 판단 규칙 (매우 중요):
 
         if recency_focus and cfg.get('has_date'):
             sort_field, sort_order = 'date', 'DESC'   # RETURN 절의 별칭(alias) 참조
+        elif oldest_focus and cfg.get('has_date'):
+            sort_field, sort_order = 'date', 'ASC'
         else:
             sort_field, sort_order = cfg['sort_field'], cfg['sort_order']
 
@@ -1116,13 +1139,14 @@ recency_focus 판단 규칙 (매우 중요):
 
     def _text_retrieve_2hop(self, keywords_str: str, dataset: str, cfg: dict,
                             limit: int, date_from: str, date_to: str,
-                            recency_focus: bool = False) -> list[dict]:
+                            recency_focus: bool = False,
+                            oldest_focus: bool = False) -> list[dict]:
         hop_limit = limit * 2
 
         # 1차 검색: 질문 키워드로 매칭 — 관계 타입 무관 (원 키워드가 직접 맞은 것이므로)
         hop1_rows = self._text_retrieve_raw(
             keywords_str, dataset, cfg, hop_limit, date_from, date_to,
-            recency_focus=recency_focus
+            recency_focus=recency_focus, oldest_focus=oldest_focus
         )
 
         hop1_nodes = set()
@@ -1140,7 +1164,7 @@ recency_focus 판단 규칙 (매우 중요):
         extended_keywords = keywords_str + ", " + ", ".join(list(hop1_nodes)[:10])
         hop2_rows = self._text_retrieve_raw(
             extended_keywords, dataset, cfg, hop_limit, date_from, date_to,
-            allowed_rels=hop2_relations, recency_focus=recency_focus
+            allowed_rels=hop2_relations, recency_focus=recency_focus, oldest_focus=oldest_focus
         )
 
         seen: dict = {}
@@ -1153,6 +1177,10 @@ recency_focus 판단 규칙 (매우 중요):
             # hop1/hop2 는 각각 날짜순으로 정렬돼 있지만, 두 결과를 합치면 전체 순서가
             # 깨지므로 병합 후 다시 날짜 내림차순으로 재정렬한다. (날짜 없는 항목은 뒤로)
             results.sort(key=lambda r: r.get('date') or '', reverse=True)
+        elif oldest_focus and cfg.get('has_date'):
+            # ★ 오름차순(과거 → 현재)으로 재정렬. 날짜 없는 항목은 아주 먼 미래 값으로
+            #   취급해 뒤로 보낸다(그래야 "가장 오래된" 결과 맨 앞에 진짜 오래된 것만 옴).
+            results.sort(key=lambda r: r.get('date') or '9999-12-31')
 
         self._dbg(2, f"[Debug] {dataset} 2-hop: 1차 {len(hop1_rows)}개 + "
               f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(results), limit)}개")
@@ -1530,6 +1558,7 @@ recency_focus 판단 규칙 (매우 중요):
     # ── A 기능: doc_id 로 메타 노드 원문(abstract/content) 조회 ──────────────────
     def _fetch_documents(self, doc_ids: set[str], cfg: dict,
                          recency_focus: bool = False,
+                         oldest_focus: bool = False,
                          full_content: bool = False,
                          prefer_normalized: bool = False) -> str:
         """
@@ -1540,8 +1569,10 @@ recency_focus 판단 규칙 (매우 중요):
         여기서 원문(논문 초록 / 보고서 전문)을 붙여 주면 답변 근거가 훨씬 풍부해진다.
         본문은 DOC_BODY_MAXLEN 로 잘라 컨텍스트 폭주를 막는다.
 
-        recency_focus 가 True 면 문서를 날짜 내림차순으로 정렬해 반환한다.
-        ("가장 최근 문서 보여줘" 류의 질문에서 최신 문서가 먼저 나오게 함)
+        recency_focus 가 True 면 문서를 날짜 내림차순("가장 최근" 질문),
+        oldest_focus 가 True 면 날짜 오름차순("가장 오래된" 질문)으로 정렬해 반환한다.
+        (둘 다 True 일 수는 없다 — _extract_keywords 에서 recency_focus 를 우선시켜
+        방어적으로 배타 처리한다.)
         """
         doc_ids = {d for d in doc_ids if d}
         if not doc_ids or not self.driver:
@@ -1591,11 +1622,17 @@ recency_focus 판단 규칙 (매우 중요):
             where_clause = f"m.{doc_key} IN $ids OR m.doc_id IN $ids"
         else:
             where_clause = "m.doc_id IN $ids"
-        if is_chunked:
-            order_clause = (f"ORDER BY m.date DESC, {group_expr}, m.chunk_index"
-                            if recency_focus else f"ORDER BY {group_expr}, m.chunk_index")
+        if recency_focus:
+            date_order = "m.date DESC"
+        elif oldest_focus:
+            date_order = "m.date ASC"
         else:
-            order_clause = "ORDER BY m.date DESC" if recency_focus else ""
+            date_order = None
+        if is_chunked:
+            order_clause = (f"ORDER BY {date_order}, {group_expr}, m.chunk_index"
+                            if date_order else f"ORDER BY {group_expr}, m.chunk_index")
+        else:
+            order_clause = f"ORDER BY {date_order}" if date_order else ""
         query_str = f"""
             MATCH (m:{doc_label})
             WHERE {where_clause}
@@ -1716,6 +1753,7 @@ recency_focus 판단 규칙 (매우 중요):
                  date_from: str = None,
                  date_to: str = None,
                  recency_focus: bool = False,
+                 oldest_focus: bool = False,
                  year_week: str = None,
                  year_week_from: str = None,
                  year_week_to: str = None,
@@ -1764,10 +1802,10 @@ recency_focus 판단 규칙 (매우 중요):
 
         if search_mode == 'text':
             rows = (self._text_retrieve_2hop(keywords_str, dataset, cfg, limit, date_from, date_to,
-                                             recency_focus=recency_focus)
+                                             recency_focus=recency_focus, oldest_focus=oldest_focus)
                     if hops == 2
                     else self._text_retrieve_raw(keywords_str, dataset, cfg, limit, date_from, date_to,
-                                                 recency_focus=recency_focus))
+                                                 recency_focus=recency_focus, oldest_focus=oldest_focus))
 
         elif search_mode == 'vector':
             rows = (self._vector_retrieve_2hop(query_text, dataset, cfg, limit, date_from, date_to)
@@ -1780,7 +1818,7 @@ recency_focus 판단 규칙 (매우 중요):
                 f_text = executor.submit(
                     self._text_retrieve_2hop if hops == 2 else self._text_retrieve_raw,
                     keywords_str, dataset, cfg, fetch_limit, date_from, date_to,
-                    recency_focus=recency_focus
+                    recency_focus=recency_focus, oldest_focus=oldest_focus
                 )
                 f_vec = executor.submit(
                     self._vector_retrieve_2hop if hops == 2 else self._vector_retrieve_raw,
@@ -1808,13 +1846,15 @@ recency_focus 판단 규칙 (매우 중요):
             sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)[:limit]
             rows = [all_rows[k] for k in sorted_keys]
 
-        # ★ "가장 최근" 의도가 감지되면, 검색 방식(text/vector/hybrid)과 무관하게
-        #   최종 결과를 날짜 내림차순으로 다시 정렬한다. text 모드는 이미 Cypher
+        # ★ "가장 최근"/"가장 오래된" 의도가 감지되면, 검색 방식(text/vector/hybrid)과
+        #   무관하게 최종 결과를 날짜순으로 다시 정렬한다. text 모드는 이미 Cypher
         #   단계에서 date 로 정렬돼 있어 사실상 no-op 이지만, vector/hybrid 는
         #   confidence·유사도·RRF 순으로 뽑힌 후보라서 여기서 최종적으로
-        #   "최신순으로 보여달라"는 사용자 의도에 맞게 다시 정렬해야 한다.
+        #   사용자 의도(최신순/오래된순)에 맞게 다시 정렬해야 한다.
         if recency_focus and cfg.get('has_date') and rows:
             rows.sort(key=lambda r: r.get('date') or '', reverse=True)
+        elif oldest_focus and cfg.get('has_date') and rows:
+            rows.sort(key=lambda r: r.get('date') or '9999-12-31')
 
         # ── 트리플 컨텍스트 ─────────────────────────────────────────────────────
         triples_ctx = self._format_rows(rows, cfg['return_fields'], date_as_week=cfg.get('date_as_week', False))
@@ -1841,6 +1881,7 @@ recency_focus 판단 규칙 (매우 중요):
               f"E(주차)={len(ids_e)} F(날짜범위)={len(ids_f)} → 합집합 {len(doc_ids)}")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus,
+                                          oldest_focus=oldest_focus,
                                           full_content=full_content, prefer_normalized=prefer_normalized)
         if doc_ids and not docs_ctx:
             self._dbg(0, f"[Debug] {dataset} 경고: doc_id {len(doc_ids)}개인데 메타 노드 조회 결과 0개 "
@@ -1885,6 +1926,7 @@ recency_focus 판단 규칙 (매우 중요):
         date_from          = extracted['date_from']
         date_to            = extracted['date_to']
         recency_focus      = extracted['recency_focus']
+        oldest_focus       = extracted['oldest_focus']
         year_week          = extracted['year_week']
         year_week_from     = extracted['year_week_from']
         year_week_to       = extracted['year_week_to']
@@ -1914,7 +1956,7 @@ recency_focus 판단 규칙 (매우 중요):
         week_disp = (f"{year_week_from}~{year_week_to}"
                      if (year_week_from or year_week_to) else year_week)
         self._dbg(1, f"[Debug] 날짜 범위: {date_from} ~ {date_to} | 최신순: {recency_focus} | "
-              f"주차: {week_disp} | 선택된 데이터셋: {target_datasets}")
+              f"가장오래된순: {oldest_focus} | 주차: {week_disp} | 선택된 데이터셋: {target_datasets}")
 
         # ★ "안녕" 같은 인사말/잡담은 키워드 추출 결과가 비어 있다 — 이런 경우 검색
         #   자체가 무의미하다(빈 텍스트로 벡터 임베딩을 만들면 임의의 최근접 이웃이
@@ -1955,8 +1997,9 @@ recency_focus 판단 규칙 (매우 중요):
                     ds: executor.submit(
                         self.retrieve,
                         extracted_keywords, query, ds, mode,
-                        DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, year_week,
-                        year_week_from, year_week_to, author_names, full_content, prefer_normalized
+                        DEFAULT_SEARCH_LIMIT, date_from, date_to, recency_focus, oldest_focus,
+                        year_week, year_week_from, year_week_to, author_names, full_content,
+                        prefer_normalized
                     )
                     for ds in search_targets
                 }
