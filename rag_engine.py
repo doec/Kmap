@@ -442,6 +442,15 @@ _OUTPUT_ORDER = [REPORTS_DATASET, CONFLUENCE_DATASET, PAPERS_DATASET]
 #     않도록 방어적으로 제외한다.
 _STRUCTURAL_RELS = ['FROM_PAPER', 'FROM_DOC', 'NEXT_CHUNK']
 
+# ★ 답변 생성 LLM 모델별로 지원하는 reasoning_effort(추론 강도) 값이 다르다.
+#   answer_llm 의 키(사이드바/채팅창 모델 선택 드롭다운과 동일)를 기준으로 한다.
+#   None = GPT-OSS 120B(.env 기본값, gpt-prod/gpt-stg).
+REASONING_EFFORT_OPTIONS = {
+    None:        ['low', 'medium', 'high'],
+    'GaussO4.1': ['none', 'medium'],
+    'Gemma4':    ['none', 'medium'],
+}
+
 
 class GraphRAG:
     def __init__(self):
@@ -470,10 +479,37 @@ class GraphRAG:
         #   None 이면 llm_util 의 .env 기본값(LLM)을 그대로 사용한다.
         self.answer_llm = None
 
+        # ★ reasoning_effort(추론 강도) — 모델마다 지원하는 값이 다르다:
+        #     GPT-OSS 120B(None)     : low / medium / high
+        #     GaussO4.1 / Gemma4     : none / medium
+        #   UI 는 answer_llm 에 맞는 값만 고르게 하지만, 모델을 바꾼 직후처럼
+        #   현재 값이 새 모델에서 지원 안 되는 조합이 될 수 있어 실제 호출
+        #   직전에 _resolve_reasoning_effort() 로 안전하게 정규화한다.
+        self.answer_reasoning_effort = 'medium'
+
     def _dbg(self, level: int, *args, **kwargs):
         """level <= self.debug_level 일 때만 출력. 에러(level=0)는 항상 출력된다."""
         if self.debug_level >= level:
             print(*args, **kwargs)
+
+    def _resolve_reasoning_effort(self) -> str:
+        """
+        self.answer_reasoning_effort 를 현재 answer_llm 이 실제로 지원하는 값으로
+        정규화한다. UI 는 모델에 맞는 값만 고르게 하지만, 모델을 바꾼 직후처럼
+        answer_reasoning_effort 가 새 모델에서 지원 안 되는 값으로 남아 있을 수
+        있으므로 호출 직전에 여기서 한 번 더 안전하게 매핑한다.
+        """
+        valid = REASONING_EFFORT_OPTIONS.get(self.answer_llm, ['low', 'medium', 'high'])
+        req = self.answer_reasoning_effort
+        if req in valid:
+            return req
+        if req == 'none':
+            # low/medium/high 만 지원하는 모델(GPT-OSS) → "추론 없음"에 가장 가까운 low
+            return 'low' if 'low' in valid else 'medium'
+        if req == 'high':
+            # none/medium 만 지원하는 모델 → high 는 medium 으로 낮춘다
+            return 'medium' if 'medium' in valid else valid[-1]
+        return 'medium' if 'medium' in valid else valid[0]
 
     def close(self):
         self.driver.close()
@@ -2227,7 +2263,8 @@ oldest_focus 판단 규칙 (매우 중요):
 
         # [단계 3] LLM 답변 생성 (여기서부터 content 청크가 스트리밍됨)
         answer_model_name = self.answer_llm or LLM  # None 이면 llm_util 의 .env 기본값(LLM)
-        self._dbg(1, f"[Debug] 답변 생성 모델: {answer_model_name}")
+        answer_reasoning_effort = self._resolve_reasoning_effort()
+        self._dbg(1, f"[Debug] 답변 생성 모델: {answer_model_name} (추론 강도: {answer_reasoning_effort})")
         yield {'type': 'status', 'text': '✍️ 답변 생성 중…'}
 
         _t_answer_start = time.monotonic()
@@ -2236,7 +2273,7 @@ oldest_focus 판단 규칙 (매우 중요):
         for chunk in ask_llm_stream_iter_messages(
             messages=messages,
             temperature=0.05,
-            reasoning_effort="medium",
+            reasoning_effort=answer_reasoning_effort,
             llm=self.answer_llm,
         ):
             if _t_first_chunk is None:

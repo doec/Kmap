@@ -8,7 +8,8 @@ from nicegui import app, ui
 from starlette.requests import Request
 
 import conversation_store
-from rag_engine import GraphRAG, REPORTS_DATASET, PAPERS_DATASET, CONFLUENCE_DATASET, DATASETS
+from rag_engine import (GraphRAG, REPORTS_DATASET, PAPERS_DATASET, CONFLUENCE_DATASET, DATASETS,
+                        REASONING_EFFORT_OPTIONS)
 from retriever.neo4j_retriever import Neo4jRetriever
 from access_log import client_ip as _client_ip, log_search
 
@@ -797,6 +798,28 @@ def build_chat_page(request: Request = None):
                     #   바꿔도 항상 같은 값으로 동기화된다.
                     llm_select.bind_value(rag, 'answer_llm')
 
+                    # ★ reasoning_effort(추론 강도) 선택 — 모델마다 지원하는 값이 다르다
+                    #   (rag_engine.REASONING_EFFORT_OPTIONS 참고: GPT-OSS는 low/medium/high,
+                    #   GaussO4.1/Gemma4는 none/medium). 모델을 바꿀 때마다 옵션 자체를
+                    #   갈아끼우고, 현재 값이 새 모델에서 지원 안 되면 medium 으로 리셋한다.
+                    reasoning_select = ui.select(
+                        {v: v for v in REASONING_EFFORT_OPTIONS[rag.answer_llm]},
+                        value=rag.answer_reasoning_effort,
+                    ).props('dense outlined label="추론 강도"').style('width:100%;')
+                    reasoning_select.bind_value(rag, 'answer_reasoning_effort')
+
+                    def _sync_reasoning_options():
+                        opts = REASONING_EFFORT_OPTIONS.get(rag.answer_llm, ['low', 'medium', 'high'])
+                        reasoning_select.set_options({v: v for v in opts})
+                        if rag.answer_reasoning_effort not in opts:
+                            rag.answer_reasoning_effort = 'medium' if 'medium' in opts else opts[0]
+                            reasoning_select.value = rag.answer_reasoning_effort
+
+                    # ★ llm_select/chat_llm_select 는 answer_llm 값 자체는 바인딩으로
+                    #   서로 동기화되지만, on_value_change 콜백은 바인딩을 타고 전파되지
+                    #   않으므로(값이 바뀐 위젯 자신만 발화) 두 위젯 모두에 직접 걸어둔다.
+                    llm_select.on_value_change(lambda e: _sync_reasoning_options())
+
             ui.separator().style('border-color:#e2e8f0;')
 
         # ── sidebar resize handle ──────────────────────────────────────────────────────────────────────
@@ -892,6 +915,7 @@ def build_chat_page(request: Request = None):
                             'font-size:12px; color:#94a3b8; min-width:120px;'
                         )
                         chat_llm_select.bind_value(rag, 'answer_llm')
+                        chat_llm_select.on_value_change(lambda e: _sync_reasoning_options())
 
                         send_btn = (
                             ui.button(icon='arrow_upward')
