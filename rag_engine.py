@@ -190,7 +190,12 @@ MAX_HISTORY_TURNS = 5
 DEFAULT_DEBUG_LEVEL = int(os.getenv('KMAP_DEBUG_LEVEL', '1'))
 
 # 문서 섹션 관련 상수
-DOC_SEARCH_LIMIT  = 5     # 문서 단위 벡터/키워드 검색으로 가져올 문서 개수 (B/C 기능)
+# ★ 5 → 10: A(트리플 출처)/D(저자)/E(주차)/F(날짜범위) 채널과 달리 B(벡터)/C(키워드)는
+#   "관련도 상위 N개"라서 5는 관련 문서가 실제로 더 있는데도 놓치는 경우가 있었다.
+#   10으로 늘려 재현율을 높인다 — 컨텍스트 길이/응답 시간이 조금 늘 수 있지만,
+#   문서 본문은 어차피 doc_id 조회 단계에서 한 번 더 걸러지므로(관련 없는 문서는
+#   대개 트리플/저자/기간 채널과 안 겹쳐 자연히 컨텍스트에서 옅게 반영됨) 부담이 크지 않다.
+DOC_SEARCH_LIMIT  = 10    # 문서 단위 벡터/키워드 검색으로 가져올 문서 개수 (B/C 기능)
 DOC_SCORE_MIN     = 0.6   # 문서 벡터 검색 최소 유사도 컷 (초록/전문처럼 긴 텍스트끼리 비교)
 DOC_BODY_MAXLEN   = 3000  # 답변 컨텍스트에 넣을 문서 본문(abstract/content) 최대 길이
                           # ★ 700자였을 때 수치/데이터가 문서 뒷부분에 있으면 잘려서
@@ -1878,7 +1883,7 @@ oldest_focus 판단 규칙 (매우 중요):
         doc_ids = ids_a | ids_b | ids_c | ids_d | ids_e | ids_f
         self._dbg(1, f"[Debug] {dataset} 문서 doc_id: A(트리플)={len(ids_a)} "
               f"B(벡터)={len(ids_b)} C(키워드)={len(ids_c)} D(저자)={len(ids_d)} "
-              f"E(주차)={len(ids_e)} F(날짜범위)={len(ids_f)} → 합집합 {len(doc_ids)}")
+              f"E(주차)={len(ids_e)} F(날짜범위)={len(ids_f)} → 중복 제거 후 총 {len(doc_ids)}건")
 
         docs_ctx = self._fetch_documents(doc_ids, cfg, recency_focus=recency_focus,
                                           oldest_focus=oldest_focus,
