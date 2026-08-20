@@ -160,7 +160,10 @@ PAPERS_DESC     = os.getenv('NEO4J_PAPERS_DESC',     '논문 기반 인과관계
 #   (단일 노드 구조 — 자세한 스키마는 아래 CONFLUENCE_DATASET 설정 주석 참고),
 #   DATASETS 설정에서 엔티티 관련 필드(vector_index, hop2_relations 등)는
 #   비워두고 문서 채널(doc_vector_index/doc_fulltext_index/doc_label)만 채운다.
-CONFLUENCE_DATASET = os.getenv('NEO4J_CONFLUENCE_DATASET', 'Confluence')
+#   ★ Neo4j 라벨명은 ReportsDB/PapersDB 와 동일한 "{이름}DB" 패턴에 맞춰
+#   'ConfluenceDB' 를 쓴다 (구 'Confluence' — Neo4j 쪽 라벨/제약도 함께 이름을
+#   바꿔야 한다. 자세한 마이그레이션 방법은 대화 기록 참고).
+CONFLUENCE_DATASET = os.getenv('NEO4J_CONFLUENCE_DATASET', 'ConfluenceDB')
 CONFLUENCE_DESC    = os.getenv('NEO4J_CONFLUENCE_DESC',    'Confluence 주간보고/문서')
 
 # ★ 데이터셋별 켬/끔 스위치. Neo4j 의 실제 데이터는 그대로 두고, 검색 대상에서만
@@ -357,7 +360,7 @@ DATASETS: dict = {
     # ★ 데이터 구조 (2026-08 최종): Document/Chunk 분리 구조를 시도했다가,
     #   다른 데이터셋(PapersDB/ReportsDB)과의 단순성/일관성을 위해 폐기하고
     #   단일 노드 구조로 되돌아왔다:
-    #     (:Confl_doc:Document:Confluence {
+    #     (:ConfluenceDoc:Document:ConfluenceDB {
     #        doc_id (유니크, 예: confluence_705713335_chunk_2),
     #        doc_group_id (그룹핑 키, 유니크 아님, 예: confluence_705713335),
     #        chunk_index, total_chunks, token_count,
@@ -386,7 +389,7 @@ DATASETS: dict = {
         'search_hops':    None,
         # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
         'doc_vector_index': 'confluence_doc_embedding',   # embed_nodes.py 가 생성
-        'doc_label':        'Confl_doc',                  # 단일 노드 레이블
+        'doc_label':        'ConfluenceDoc',              # 단일 노드 레이블
         'doc_body_field':   'content_norm',           # 본문 속성명 (물질명 정규화본)
         'doc_body_label':   '내용',                    # LLM 컨텍스트에 표기할 본문 레이블
         # FULLTEXT 는 원본/정규화 쌍 (둘 다 검색해 결과를 합친다 — 기존 코드가

@@ -29,8 +29,12 @@ USER = os.getenv('NEO4J_USER', 'neo4j')
 PW   = os.getenv('NEO4J_PASSWORD', '')
 
 # rag_engine.py 의 CONFLUENCE_DATASET 설정과 반드시 일치시켜 둔다.
-DOC_LABEL      = 'Confl_doc'          # 단일 노드 레이블
-DS_LABEL       = 'Confluence'         # 데이터셋 공통 레이블
+# ★ 2026-08: Confl_doc/Confluence → ConfluenceDoc/ConfluenceDB 로 라벨명 변경
+#   (ReportsDB/PapersDB 와 동일한 "{이름}DB" 패턴에 맞춤). Neo4j 쪽 라벨/제약도
+#   함께 마이그레이션했다는 전제 — 아직 안 했다면 옛 라벨('Confl_doc'/'Confluence')로
+#   되돌려서 실행하세요.
+DOC_LABEL      = 'ConfluenceDoc'      # 단일 노드 레이블
+DS_LABEL       = 'ConfluenceDB'       # 데이터셋 공통 레이블
 VECTOR_INDEX   = 'confluence_doc_embedding'
 FULLTEXT_INDEXES = ['confluence_doc_fulltext', 'confluence_doc_fulltext_norm']
 GROUP_FIELD    = 'doc_group_id'
@@ -82,7 +86,7 @@ def check_counts(session):
         fail(f':{DS_LABEL} 라벨을 가진 노드가 전혀 없다 — dataset_label 이름이 다르다.')
     elif not any(DOC_LABEL in r['labels'] for r in rows):
         fail(f':{DS_LABEL} 노드는 있지만 :{DOC_LABEL} 라벨을 가진 것이 없다 — '
-             f'실제 노드 레이블이 스펙(Confl_doc)과 다르게 적재됐을 수 있다.')
+             f'실제 노드 레이블이 스펙({DOC_LABEL})과 다르게 적재됐을 수 있다.')
     else:
         ok(f':{DOC_LABEL}:{DS_LABEL} 조합 확인됨')
 
@@ -191,7 +195,7 @@ def check_indexes(session):
     v = by_name.get(VECTOR_INDEX)
     if not v:
         fail(f'벡터 인덱스 {VECTOR_INDEX} 가 없다 — B채널(문서 벡터 검색) 전면 0건. '
-             f'embed_nodes.py 를 Confl_doc:Confluence 대상으로 다시 실행해야 한다.')
+             f'embed_nodes.py 를 {DOC_LABEL}:{DS_LABEL} 대상으로 다시 실행해야 한다.')
     else:
         labels = v['labelsOrTypes'] or []
         if v['state'] != 'ONLINE':
