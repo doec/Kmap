@@ -157,7 +157,7 @@ PAPERS_DESC     = os.getenv('NEO4J_PAPERS_DESC',     '논문 기반 인과관계
 
 # ★ Confluence 문서 데이터셋 (구 BD_OKR_bf2026 → 동일한 Confluence 주간보고
 #   데이터라 하나로 통합됨). 트리플/엔티티가 없는 순수 문서형 데이터셋이라
-#   (본문/임베딩은 Chunk 노드, 메타데이터는 Document 노드에 분리 저장),
+#   (단일 노드 구조 — 자세한 스키마는 아래 CONFLUENCE_DATASET 설정 주석 참고),
 #   DATASETS 설정에서 엔티티 관련 필드(vector_index, hop2_relations 등)는
 #   비워두고 문서 채널(doc_vector_index/doc_fulltext_index/doc_label)만 채운다.
 CONFLUENCE_DATASET = os.getenv('NEO4J_CONFLUENCE_DATASET', 'Confluence')
@@ -204,11 +204,6 @@ AUTHOR_SEARCH_LIMIT = 30
 #   관련도가 아니라 그 기간의 문서 자체를 원하므로 relevance 컷 없이 전부 담되,
 #   너무 넓은 범위에서 컨텍스트가 폭주하지 않도록 안전 상한을 둔다(최신순 우선).
 WEEK_RANGE_LIMIT = 60
-
-# ★ Document/Chunk 분리 구조에서 "문서 단위로 매칭된 결과"를 청크로 펼칠 때의 상한.
-#   문서 하나가 여러 청크로 쪼개져 있어 그대로 펼치면 컨텍스트가 폭주할 수 있다.
-#   (주간보고는 total_chunks=1 이라 영향 없고, 긴 서브페이지에서만 의미가 있다)
-CHUNK_EXPAND_LIMIT = 120
 
 # 엔티티 벡터 검색(짧은 "name (type)" 텍스트 vs 긴 질문 문장) 최소 유사도 컷.
 # ★ 실측 결과, BGE-M3 임베딩은 무관한 쌍끼리도 코사인 유사도가 0.8 근처에서
@@ -353,6 +348,23 @@ DATASETS: dict = {
     # 해당하는 필드(vector_index, meta_label, hop2_relations)는 아예 넣지 않는다.
     # → retrieve() 가 entity 검색을 text 모드로 자동 폴백하고(빈 결과, 무해),
     #   문서 채널(B: 벡터, C: FULLTEXT, D: 저자)만으로 문서를 찾아 컨텍스트를 구성한다.
+    #
+    # ★ 데이터 구조 (2026-08 최종): Document/Chunk 분리 구조를 시도했다가,
+    #   다른 데이터셋(PapersDB/ReportsDB)과의 단순성/일관성을 위해 폐기하고
+    #   단일 노드 구조로 되돌아왔다:
+    #     (:Confl_doc:Document:Confluence {
+    #        doc_id (유니크, 예: confluence_705713335_chunk_2),
+    #        doc_group_id (그룹핑 키, 유니크 아님, 예: confluence_705713335),
+    #        chunk_index, total_chunks, token_count,
+    #        title, title_norm, author, date, year_week,
+    #        source, source_url, space_name, page_title,
+    #        title_path, title_path_norm, last_modified,
+    #        research_item, research_item_norm, summary, summary_norm,
+    #        content, content_norm, embedding, dataset
+    #     }) -[:NEXT_CHUNK]-> (같은 doc_group_id 내 다음 청크, total_chunks==1 이면 없음)
+    #   청킹 여부와 무관하게 doc_id 는 항상 "{그룹키}_chunk_N" 패턴이고, total_chunks
+    #   로만 청킹 여부(1 vs 2 이상)를 판단한다 — ReportsDB/PapersDB 와 동일한
+    #   단일 노드 구조라 아래 doc_label/doc_key 설정만으로 기존 코드 경로를 그대로 탄다.
     CONFLUENCE_DATASET: {
         'description':    CONFLUENCE_DESC,
         'node_types':     '해당 없음 (문서 전용 데이터셋 — 트리플/엔티티 없음)',
@@ -367,36 +379,22 @@ DATASETS: dict = {
         'min_confidence': None,
         'default_mode':   'hybrid',
         'search_hops':    None,
-        # ── Document / Chunk 분리 구조 ────────────────────────────────────────
-        # ★ Confluence 는 문서가 길어 청킹을 도입하면서, 메타데이터 노드(Document)와
-        #   본문·임베딩 노드(Chunk)를 분리했다:
-        #     (:Document:Confluence {doc_id 유니크, title, title_path, author, date,
-        #                            year_week, source_url, space_name, ...})
-        #       -[:HAS_CHUNK]-> (:Chunk:Confluence {chunk_id 유니크, doc_id,
-        #                            chunk_index, total_chunks, content, content_norm,
-        #                            research_item, summary, embedding, ...})
-        #       -[:NEXT_CHUNK]-> (같은 doc_id 내 다음 청크)
-        #   따라서 "본문/임베딩 검색"은 Chunk 에서, "제목/저자/날짜/주차/URL 필터·표시"는
-        #   Document 에서 해야 하고, 둘을 HAS_CHUNK 로 조인해야 한다.
-        'split_doc_chunk':  True,
-        'doc_label':        'Document',    # 메타데이터 노드 (:Document:Confluence)
-        'chunk_label':      'Chunk',       # 본문/임베딩 노드 (:Chunk:Confluence)
-        'chunk_rel':        'HAS_CHUNK',
-        # ★ :Document / :Chunk 는 다른 데이터셋과 공유될 수 있는 범용 라벨이라
-        #   반드시 데이터셋 라벨로 범위를 좁혀야 한다(교차 오염 방지).
-        'dataset_label':    'Confluence',
-        # 임베딩은 Chunk 노드에 있으므로 이 벡터 인덱스는 Chunk 대상이다.
-        'doc_vector_index': 'confluence_doc_embedding',
-        # FULLTEXT 도 문서용/청크용으로 분리됨 (각각 원본/정규화 쌍)
-        'doc_fulltext_index':   ['confluence_doc_fulltext', 'confluence_doc_fulltext_norm'],
-        'chunk_fulltext_index': ['confluence_chunk_fulltext', 'confluence_chunk_fulltext_norm'],
+        # ── 문서(메타 노드) 관련 설정 (A: doc_id 조인 / B: 문서 벡터 검색) ──
+        'doc_vector_index': 'confluence_doc_embedding',   # embed_nodes.py 가 생성
+        'doc_label':        'Confl_doc',                  # 단일 노드 레이블
         'doc_body_field':   'content_norm',           # 본문 속성명 (물질명 정규화본)
         'doc_body_label':   '내용',                    # LLM 컨텍스트에 표기할 본문 레이블
+        # FULLTEXT 는 원본/정규화 쌍 (둘 다 검색해 결과를 합친다 — 기존 코드가
+        # doc_fulltext_index 를 리스트로 받으면 이미 이렇게 동작한다)
+        'doc_fulltext_index': ['confluence_doc_fulltext', 'confluence_doc_fulltext_norm'],
         # ReportsDB 와 마찬가지로 물질 코드가 섞일 수 있으므로 질의 정규화 적용
         'normalize_query':  True,
-        # 검색 결과를 주고받는 유니크 키는 청크 단위(chunk_id)
-        'doc_key':          'chunk_id',
+        # ★ 청킹됨(total_chunks>1)에 관계없이 doc_id 가 항상 청크 단위 유니크 키다.
+        #   같은 페이지의 청크들을 순서대로 묶어 보여주기 위해 doc_group_id 로
+        #   그룹핑/정렬한다(문자열 doc_id 만으로는 "_chunk_10" 이 "_chunk_2" 보다
+        #   사전식으로 앞에 와 순서가 깨진다).
         'chunked':          True,
+        'doc_group_field':  'doc_group_id',
     },
 }
 
@@ -433,10 +431,11 @@ _OUTPUT_ORDER = [REPORTS_DATASET, CONFLUENCE_DATASET, PAPERS_DATASET]
 # 데이터셋 레이블(:PapersDB / :ReportsDB)을 공유하므로,
 # MATCH (s:PapersDB)-[r]->(o:PapersDB) 같은 패턴이 이 구조 관계까지 잡아버린다.
 # 이들은 "의미 트리플"이 아니라 출처 연결이므로, 검색 시 관계 타입으로 제외한다.
-#   ★ HAS_CHUNK / NEXT_CHUNK 도 구조 관계다: Document 와 Chunk 가 둘 다 :Confluence
-#     라벨을 공유하므로, MATCH (s:Confluence)-[r]->(o:Confluence) 패턴이 이 관계들까지
-#     "의미 트리플"로 잡아버린다. 트리플 검색에서 제외한다.
-_STRUCTURAL_RELS = ['FROM_PAPER', 'FROM_DOC', 'HAS_CHUNK', 'NEXT_CHUNK']
+#   ★ NEXT_CHUNK 도 구조 관계다: Confluence 는 단일 노드 구조라 트리플 자체가
+#     없지만, 같은 청크 노드끼리 :Confluence 라벨을 공유하므로 혹시라도
+#     (s:Confluence)-[r]->(o:Confluence) 패턴이 이 관계를 "의미 트리플"로 잡지
+#     않도록 방어적으로 제외한다.
+_STRUCTURAL_RELS = ['FROM_PAPER', 'FROM_DOC', 'NEXT_CHUNK']
 
 
 class GraphRAG:
@@ -1156,56 +1155,6 @@ recency_focus 판단 규칙 (매우 중요):
               f"2차 {len(hop2_rows)}개 → 중복 제거 후 {min(len(results), limit)}개")
         return results[:limit]
 
-    # ── 공통: 노드 라벨 패턴 (Document/Chunk 분리 구조 대응) ──────────────────────
-    @staticmethod
-    def _doc_pattern(cfg: dict, alias: str = 'd') -> str:
-        """
-        메타데이터 노드의 라벨 패턴을 만든다 (예: "d:Document:Confluence").
-
-        ★ :Document / :Chunk 는 여러 데이터셋이 공유할 수 있는 범용 라벨이라,
-          dataset_label 이 지정된 경우 반드시 함께 붙여 범위를 좁힌다. 그러지 않으면
-          Confluence 질의가 다른 데이터셋의 문서까지 긁어온다.
-        """
-        label = cfg.get('doc_label')
-        ds = cfg.get('dataset_label')
-        return f"{alias}:{label}:{ds}" if ds else f"{alias}:{label}"
-
-    @staticmethod
-    def _chunk_pattern(cfg: dict, alias: str = 'c') -> str:
-        """본문/임베딩 노드의 라벨 패턴 (예: "c:Chunk:Confluence")."""
-        label = cfg.get('chunk_label')
-        ds = cfg.get('dataset_label')
-        return f"{alias}:{label}:{ds}" if ds else f"{alias}:{label}"
-
-    def _expand_docs_to_chunks(self, cfg: dict, where: str, params: dict,
-                               doc_limit: int, order_by: str = 'd.date DESC') -> list[str]:
-        """
-        Document 조건으로 문서를 고른 뒤, HAS_CHUNK 로 그 문서의 청크들을 펼쳐
-        chunk_id 목록을 돌려준다 (분리 구조 전용).
-
-        저자/주차/날짜처럼 "문서 단위" 조건으로 찾은 결과도 최종적으로는 본문(청크)이
-        필요하므로, 문서 → 청크로 펼쳐서 검색 결과의 통화 단위를 chunk_id 로 통일한다.
-        문서 수를 먼저 제한하고 그다음 청크 수를 제한해 컨텍스트 폭주를 막는다.
-        """
-        chunk_rel = cfg.get('chunk_rel', 'HAS_CHUNK')
-        query_str = f"""
-            MATCH ({self._doc_pattern(cfg, 'd')})
-            WHERE {where}
-            WITH d ORDER BY {order_by} LIMIT $doc_limit
-            MATCH (d)-[:{chunk_rel}]->({self._chunk_pattern(cfg, 'c')})
-            RETURN c.chunk_id AS doc_id
-            ORDER BY {order_by}, c.chunk_index
-            LIMIT $chunk_limit
-        """
-        params = {**params, 'doc_limit': doc_limit, 'chunk_limit': CHUNK_EXPAND_LIMIT}
-        try:
-            with self.driver.session() as session:
-                rows = [dict(r) for r in session.run(query_str, **params)]
-            return [r['doc_id'] for r in rows if r.get('doc_id')]
-        except Exception as e:
-            self._dbg(0, f"[Debug] 문서→청크 확장 실패: {e}")
-            return []
-
     # ── 공통: 메타 노드 날짜/주차 범위 필터 ──────────────────────────────────────
     def _meta_date_filter(self, cfg: dict, alias: str,
                           date_from: str = None, date_to: str = None,
@@ -1276,8 +1225,12 @@ recency_focus 판단 규칙 (매우 중요):
         이건 "문서 자체"(논문 초록 / 보고서 전문)를 질문과의 유사도로 찾는다.
         → "이 주제 관련 논문/보고서 찾아줘" 류의 질의에 강하다.
 
-        papersdb_doc_embedding / reportsdb_doc_embedding 인덱스는 각각
-        Paper / Report 노드만 포함하므로 메타 노드 제외 필터가 필요 없다.
+        papersdb_doc_embedding / reportsdb_doc_embedding / confluence_doc_embedding
+        인덱스는 각각 해당 데이터셋의 단일 노드 레이블만 포함하므로 메타 노드
+        제외 필터가 필요 없다.
+
+        ★ 청킹된 데이터셋(Confluence)은 doc_id 자체가 청크 단위 유니크 키이므로
+          그대로 doc_id 를 돌려주면 된다(별도 조인/분기 불필요).
         """
         doc_index = cfg.get('doc_vector_index')
         if not doc_index:
@@ -1290,38 +1243,17 @@ recency_focus 판단 규칙 (매우 중요):
         # ★ 기간(date/주차) 필터: 없으면 "2026년 관련 보고서" 처럼 기간이 지정된
         #   질문에서도 벡터 유사도만 보고 연도 제한이 전혀 안 걸려 다른 연도 문서까지
         #   섞여 나오는 문제가 있었다. date_as_week 데이터셋은 year_week 범위로 거른다.
-        # ★ 청킹된 데이터셋(Confluence)은 유니크 키가 chunk_id 이므로 그 값을 돌려준다
-        #   (doc_id 를 돌려주면 이후 조회/중복 제거에서 청크들이 하나로 뭉개진다).
         doc_key = cfg.get('doc_key', 'doc_id')
-        if cfg.get('split_doc_chunk'):
-            # 분리 구조: 임베딩은 Chunk 에 있고 date/year_week 는 Document 에 있으므로,
-            # 벡터로 찾은 청크를 HAS_CHUNK 로 문서와 조인한 뒤 기간 필터를 건다.
-            date_filter, date_params = self._meta_date_filter(
-                cfg, 'd', date_from, date_to, yw_from, yw_to
-            )
-            chunk_rel = cfg.get('chunk_rel', 'HAS_CHUNK')
-            ds_label = cfg.get('dataset_label')
-            ds_guard = f" AND node:{ds_label}" if ds_label else ""
-            query_str = f"""
-                CALL db.index.vector.queryNodes($index, $limit, $q_emb)
-                YIELD node, score
-                WHERE score > $score_min{ds_guard}
-                MATCH ({self._doc_pattern(cfg, 'd')})-[:{chunk_rel}]->(node)
-                WHERE true {date_filter}
-                RETURN node.chunk_id AS doc_id, score
-                ORDER BY score DESC
-            """
-        else:
-            date_filter, date_params = self._meta_date_filter(
-                cfg, 'node', date_from, date_to, yw_from, yw_to
-            )
-            query_str = f"""
-                CALL db.index.vector.queryNodes($index, $limit, $q_emb)
-                YIELD node, score
-                WHERE score > $score_min {date_filter}
-                RETURN node.{doc_key} AS doc_id, score
-                ORDER BY score DESC
-            """
+        date_filter, date_params = self._meta_date_filter(
+            cfg, 'node', date_from, date_to, yw_from, yw_to
+        )
+        query_str = f"""
+            CALL db.index.vector.queryNodes($index, $limit, $q_emb)
+            YIELD node, score
+            WHERE score > $score_min {date_filter}
+            RETURN node.{doc_key} AS doc_id, score
+            ORDER BY score DESC
+        """
         params = {
             'index':     doc_index,
             'limit':     limit,
@@ -1368,12 +1300,9 @@ recency_focus 판단 규칙 (매우 중요):
           함께 들어있어 문자열 하나로 충분).
         """
         ft_indexes = cfg.get('doc_fulltext_index')
-        chunk_ft_indexes = cfg.get('chunk_fulltext_index')
         if isinstance(ft_indexes, str):
             ft_indexes = [ft_indexes]
-        if isinstance(chunk_ft_indexes, str):
-            chunk_ft_indexes = [chunk_ft_indexes]
-        if not keywords_str or not (ft_indexes or chunk_ft_indexes):
+        if not keywords_str or not ft_indexes:
             return []
 
         # Lucene 질의 문자열 구성:
@@ -1391,62 +1320,6 @@ recency_focus 판단 규칙 (매우 중요):
 
         doc_ids: list[str] = []
 
-        if cfg.get('split_doc_chunk'):
-            # ── 분리 구조 ────────────────────────────────────────────────────────
-            # 인덱스가 두 종류로 나뉘어 있고 각각 다른 노드를 돌려준다:
-            #   chunk_fulltext_index → Chunk 노드 (본문/요약/연구항목) → chunk_id 직행
-            #   doc_fulltext_index   → Document 노드 (제목/경로)      → 청크로 펼쳐야 함
-            # 기간 필터는 두 경우 모두 Document 쪽 속성으로 판단한다.
-            date_filter, date_params = self._meta_date_filter(
-                cfg, 'd', date_from, date_to, yw_from, yw_to
-            )
-            chunk_rel = cfg.get('chunk_rel', 'HAS_CHUNK')
-            ds_label = cfg.get('dataset_label')
-            ds_guard = f" AND node:{ds_label}" if ds_label else ""
-
-            # (1) 청크 본문 인덱스 → 매칭된 청크 그대로
-            chunk_query = f"""
-                CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
-                YIELD node, score
-                WHERE true{ds_guard}
-                MATCH ({self._doc_pattern(cfg, 'd')})-[:{chunk_rel}]->(node)
-                WHERE true {date_filter}
-                RETURN node.chunk_id AS doc_id, score
-                ORDER BY score DESC
-            """
-            # (2) 문서 제목/경로 인덱스 → 그 문서의 청크들로 펼침
-            doc_query = f"""
-                CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
-                YIELD node, score
-                WHERE true{ds_guard}
-                WITH node AS d, score
-                WHERE true {date_filter}
-                MATCH (d)-[:{chunk_rel}]->({self._chunk_pattern(cfg, 'c')})
-                RETURN c.chunk_id AS doc_id, score
-                ORDER BY score DESC, c.chunk_index
-                LIMIT $chunk_limit
-            """
-            for ft_index in (chunk_ft_indexes or []):
-                params = {'index': ft_index, 'q': lucene_query, 'limit': limit,
-                          **date_params}
-                try:
-                    with self.driver.session() as session:
-                        rows = [dict(r) for r in session.run(chunk_query, **params)]
-                    doc_ids.extend(r['doc_id'] for r in rows if r.get('doc_id'))
-                except Exception as e:
-                    self._dbg(0, f"[Debug] 청크 FULLTEXT 검색 실패 ({ft_index}): {e}")
-            for ft_index in (ft_indexes or []):
-                params = {'index': ft_index, 'q': lucene_query, 'limit': limit,
-                          'chunk_limit': CHUNK_EXPAND_LIMIT, **date_params}
-                try:
-                    with self.driver.session() as session:
-                        rows = [dict(r) for r in session.run(doc_query, **params)]
-                    doc_ids.extend(r['doc_id'] for r in rows if r.get('doc_id'))
-                except Exception as e:
-                    self._dbg(0, f"[Debug] 문서 제목 FULLTEXT 검색 실패 ({ft_index}): {e}")
-            return doc_ids
-
-        # ── 단일 노드 구조 (ReportsDB / PapersDB) ────────────────────────────────
         # ★ 기간(date/주차) 필터 (다른 문서 채널과 동일한 이유)
         date_filter, date_params = self._meta_date_filter(
             cfg, 'node', date_from, date_to, yw_from, yw_to
@@ -1498,23 +1371,13 @@ recency_focus 판단 규칙 (매우 중요):
         if not keywords:
             return []
 
-        # ★ 저자 조건 (author 는 Confluence 분리 구조에서도 Document 쪽 속성이다)
+        # ★ 저자 조건 (author/researcher 둘 다 지원 — 데이터셋마다 필드명이 다를 수 있음)
         author_cond = (
             "(%(a)s.author IS NOT NULL OR %(a)s.researcher IS NOT NULL) "
             "AND any(kw IN $keywords "
             "        WHERE toLower(COALESCE(%(a)s.author, '')) CONTAINS toLower(kw) "
             "           OR toLower(COALESCE(%(a)s.researcher, '')) CONTAINS toLower(kw))"
         )
-
-        if cfg.get('split_doc_chunk'):
-            # 분리 구조: Document 에서 저자로 문서를 찾고 → 그 문서의 청크들로 펼친다
-            date_filter, date_params = self._meta_date_filter(
-                cfg, 'd', date_from, date_to, yw_from, yw_to
-            )
-            where = (author_cond % {'a': 'd'}) + date_filter
-            return self._expand_docs_to_chunks(
-                cfg, where, {'keywords': keywords, **date_params}, doc_limit=limit
-            )
 
         # ★ 기간(date/주차) 필터: 이게 없으면 "2026년에 이창수가 쓴 보고서"처럼
         #   기간이 지정된 질문에서도 저자 매칭만 되고 연도 제한이 전혀 적용되지 않아,
@@ -1564,8 +1427,7 @@ recency_focus 판단 규칙 (매우 중요):
         if not doc_label:
             return []
 
-        # year_week 는 분리 구조에서도 Document 쪽 속성이므로 alias 만 바꿔 재사용한다.
-        a = 'd' if cfg.get('split_doc_chunk') else 'm'
+        a = 'm'
         if year_week:
             where = f"toLower({a}.year_week) = toLower($year_week)"
             params = {'year_week': year_week}
@@ -1581,12 +1443,6 @@ recency_focus 판단 규칙 (매우 중요):
             where = f"{a}.year_week IS NOT NULL AND " + " AND ".join(conds)
         else:
             return []
-
-        if cfg.get('split_doc_chunk'):
-            # 분리 구조: 주차로 문서를 고르고 → 그 문서의 청크들로 펼친다
-            return self._expand_docs_to_chunks(
-                cfg, where, params, doc_limit=WEEK_RANGE_LIMIT
-            )
 
         params['limit'] = WEEK_RANGE_LIMIT
         doc_key = cfg.get('doc_key', 'doc_id')
@@ -1626,7 +1482,7 @@ recency_focus 판단 규칙 (매우 중요):
         if not doc_label or not (date_from or date_to):
             return []
 
-        a = 'd' if cfg.get('split_doc_chunk') else 'm'
+        a = 'm'
         conds = [f"{a}.date IS NOT NULL"]
         params: dict = {}
         if date_from:
@@ -1638,12 +1494,6 @@ recency_focus 판단 규칙 (매우 중요):
         if cfg.get('date_as_week'):
             # year_week 가 있는 문서는 E채널 담당 → 여기서는 없는 것만
             conds.append(f"COALESCE({a}.year_week, '') = ''")
-
-        if cfg.get('split_doc_chunk'):
-            # 분리 구조: 날짜로 문서를 고르고 → 그 문서의 청크들로 펼친다
-            return self._expand_docs_to_chunks(
-                cfg, " AND ".join(conds), params, doc_limit=WEEK_RANGE_LIMIT
-            )
 
         params['limit'] = WEEK_RANGE_LIMIT
         doc_key = cfg.get('doc_key', 'doc_id')
@@ -1709,68 +1559,46 @@ recency_focus 판단 규칙 (매우 중요):
             body_expr = f"COALESCE(m.content, m.{body_field})"
         else:
             body_expr = f"COALESCE(m.{body_field}, m.content)"
-        # ★ 청킹 대응:
-        #   - 조회 키: 청킹 데이터셋은 chunk_id 가 유니크 키다. 단, 트리플에서 나온
-        #     출처 id(A 채널)는 doc_id 라서, 두 경우를 모두 받아들이도록 OR 로 매칭한다.
-        #   - 정렬: 같은 페이지의 청크들이 흩어지지 않고 순서대로 붙어 나오도록
-        #     doc_id, chunk_index 로 정렬한다(최신순 요청이면 date 를 앞에 둔다).
+        # ★ 청킹 대응 (단일 노드 구조 — Confluence 도 ReportsDB/PapersDB 와 동일):
+        #   - 조회 키: doc_id 가 항상 유니크 키(청킹된 경우 "{그룹키}_chunk_N" 형태).
+        #   - 정렬: 같은 문서(그룹)의 청크들이 흩어지지 않고 순서대로 붙어 나오도록
+        #     doc_group_field(없으면 doc_id), chunk_index 로 정렬한다
+        #     (최신순 요청이면 date 를 앞에 둔다). doc_id 문자열만으로 정렬하면
+        #     "_chunk_10"이 "_chunk_2"보다 사전식으로 앞에 와 순서가 깨질 수 있어,
+        #     그룹 키가 지정된 데이터셋은 반드시 그 필드로 그룹핑한다.
         #   - title/author 는 새 스키마의 page_title/researcher 도 함께 받는다.
         doc_key = cfg.get('doc_key', 'doc_id')
         is_chunked = bool(cfg.get('chunked'))
+        group_field = cfg.get('doc_group_field')
+        group_expr = f"m.{group_field}" if group_field else "m.doc_id"
 
-        if cfg.get('split_doc_chunk'):
-            # ── Document/Chunk 분리 구조 ─────────────────────────────────────────
-            #   표시용 메타데이터(제목/경로/저자/날짜/URL)는 Document 에, 본문은 Chunk 에
-            #   있으므로 HAS_CHUNK 로 조인해서 한 줄로 합친다. 넘겨받은 id 는 보통
-            #   chunk_id 지만, 문서 단위 id(doc_id)가 섞여 들어와도 받아들인다.
-            chunk_rel = cfg.get('chunk_rel', 'HAS_CHUNK')
-            body_expr_c = body_expr.replace('m.', 'c.')
-            order_clause = ("ORDER BY d.date DESC, d.doc_id, c.chunk_index"
-                            if recency_focus else "ORDER BY d.doc_id, c.chunk_index")
-            query_str = f"""
-                MATCH ({self._doc_pattern(cfg, 'd')})-[:{chunk_rel}]->({self._chunk_pattern(cfg, 'c')})
-                WHERE c.chunk_id IN $ids OR d.doc_id IN $ids
-                RETURN c.chunk_id AS uid,
-                       d.doc_id   AS doc_id,
-                       COALESCE(d.title, d.page_title) AS title,
-                       d.author       AS author,
-                       d.date         AS date,
-                       d.source_url   AS source_url,
-                       null           AS journal,
-                       d.year_week    AS year_week,
-                       d.title_path   AS title_path,
-                       c.chunk_index  AS chunk_index,
-                       c.total_chunks AS total_chunks,
-                       {body_expr_c} AS body
-                {order_clause}
-            """
+        if doc_key != 'doc_id':
+            where_clause = f"m.{doc_key} IN $ids OR m.doc_id IN $ids"
         else:
-            if doc_key != 'doc_id':
-                where_clause = f"m.{doc_key} IN $ids OR m.doc_id IN $ids"
-            else:
-                where_clause = "m.doc_id IN $ids"
-            if is_chunked:
-                order_clause = ("ORDER BY m.date DESC, m.doc_id, m.chunk_index"
-                                if recency_focus else "ORDER BY m.doc_id, m.chunk_index")
-            else:
-                order_clause = "ORDER BY m.date DESC" if recency_focus else ""
-            query_str = f"""
-                MATCH (m:{doc_label})
-                WHERE {where_clause}
-                RETURN m.{doc_key}  AS uid,
-                       m.doc_id     AS doc_id,
-                       COALESCE(m.title, m.page_title)   AS title,
-                       COALESCE(m.author, m.researcher)  AS author,
-                       m.date       AS date,
-                       m.source_url AS source_url,
-                       m.journal    AS journal,
-                       m.year_week  AS year_week,
-                       m.title_path   AS title_path,
-                       m.chunk_index  AS chunk_index,
-                       m.total_chunks AS total_chunks,
-                       {body_expr} AS body
-                {order_clause}
-            """
+            where_clause = "m.doc_id IN $ids"
+        if is_chunked:
+            order_clause = (f"ORDER BY m.date DESC, {group_expr}, m.chunk_index"
+                            if recency_focus else f"ORDER BY {group_expr}, m.chunk_index")
+        else:
+            order_clause = "ORDER BY m.date DESC" if recency_focus else ""
+        query_str = f"""
+            MATCH (m:{doc_label})
+            WHERE {where_clause}
+            RETURN m.{doc_key}  AS uid,
+                   m.doc_id     AS doc_id,
+                   {group_expr} AS doc_group_id,
+                   COALESCE(m.title, m.page_title)   AS title,
+                   COALESCE(m.author, m.researcher)  AS author,
+                   m.date       AS date,
+                   m.source_url AS source_url,
+                   m.journal    AS journal,
+                   m.year_week  AS year_week,
+                   m.title_path   AS title_path,
+                   m.chunk_index  AS chunk_index,
+                   m.total_chunks AS total_chunks,
+                   {body_expr} AS body
+            {order_clause}
+        """
         try:
             with self.driver.session() as session:
                 docs = [dict(r) for r in session.run(query_str, ids=list(doc_ids))]
@@ -1783,7 +1611,7 @@ recency_focus 판단 규칙 (매우 중요):
 
         # ★ 중복 제거: 같은 노드가 여러 채널에서 중복으로 잡히거나(DB 중복), 제목+출처가
         #   동일한 사실상 같은 문서가 여러 건 저장돼 있으면 같은 내용이 두 번 나온다.
-        #   유니크 키(청킹 데이터셋은 chunk_id)로 먼저 걸러내고, 그 키가 달라도
+        #   유니크 키(doc_id)로 먼저 걸러내고, 그 키가 달라도
         #   제목+출처가 완전히 같으면 같은 문서로 보고 한 번만 남긴다(순서 유지).
         #   ★★ 청킹 데이터셋에서는 "제목+출처" 기준을 쓰면 한 페이지의 모든 청크가
         #   같은 제목·같은 URL 이라 전부 하나로 뭉개져 내용 대부분이 사라진다.
@@ -1798,7 +1626,7 @@ recency_focus 판단 규칙 (매우 중요):
             # 제목이 같아도 주차/출처가 다르면 다른 문서로 취급(오검출 방지)
             key = (d.get('title'), d.get('source_url'), d.get('year_week'))
             if is_chunked:
-                key = key + (d.get('doc_id'), d.get('chunk_index'))
+                key = key + (d.get('doc_group_id'), d.get('chunk_index'))
             has_key = any(k is not None for k in key)
             if has_key and key in seen_keys:
                 continue
