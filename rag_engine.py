@@ -592,6 +592,9 @@ author_names 판단 규칙 (매우 중요):
   (예: "MIM", "capacitor", "TiO2")를 author_names 에 넣지 마세요 — author 필드는
   부분 문자열(CONTAINS) 매칭이라, 관련 없는 용어가 저자명에 우연히 포함되면 전혀
   관련 없는 문서가 대량으로 섞여 들어갑니다.
+- ★ DB에는 순수 이름만 저장돼 있으므로("이창수"), "이창수님", "이창수 연구원",
+  "이창수 책임"처럼 존칭/직급이 붙어 질문에 나와도 author_names 에는 존칭/직급을
+  떼어낸 순수 이름만 넣으세요. (예: "이창수 책임이 작성한 보고서" → author_names: "이창수")
 
 날짜 변환 규칙:
 - "N년 이후", "N년 이상", "N년부터" → date_from: "N-01-01", date_to: null
@@ -1372,11 +1375,23 @@ recency_focus 판단 규칙 (매우 중요):
             return []
 
         # ★ 저자 조건 (author/researcher 둘 다 지원 — 데이터셋마다 필드명이 다를 수 있음)
+        #
+        # ★ 양방향 CONTAINS: DB에는 순수 이름만 저장돼 있는데(예: "이창수"), LLM이
+        #   추출하는 author_names 는 질문 문구에 따라 "이창수님", "이창수 연구원",
+        #   "이창수 책임"처럼 존칭/직급이 붙어 나올 수 있다. 한쪽 방향(author CONTAINS kw)
+        #   만 보면 kw 가 author 보다 길어지는 순간(존칭이 붙는 순간) 항상 실패한다
+        #   (짧은 kw 가 긴 author 안에 있는지는 맞지만, 긴 kw 가 짧은 author 안에
+        #   있을 리 없기 때문). 한국어는 존칭/직급이 이름 뒤에 붙으므로 kw 가 author 를
+        #   prefix 로 포함하는 반대 방향도 함께 확인해야 "이창수님" 같은 표현이 걸린다.
         author_cond = (
             "(%(a)s.author IS NOT NULL OR %(a)s.researcher IS NOT NULL) "
-            "AND any(kw IN $keywords "
-            "        WHERE toLower(COALESCE(%(a)s.author, '')) CONTAINS toLower(kw) "
-            "           OR toLower(COALESCE(%(a)s.researcher, '')) CONTAINS toLower(kw))"
+            "AND any(kw IN $keywords WHERE "
+            "        (COALESCE(%(a)s.author, '') <> '' AND "
+            "         (toLower(%(a)s.author) CONTAINS toLower(kw) "
+            "          OR toLower(kw) CONTAINS toLower(%(a)s.author))) "
+            "     OR (COALESCE(%(a)s.researcher, '') <> '' AND "
+            "         (toLower(%(a)s.researcher) CONTAINS toLower(kw) "
+            "          OR toLower(kw) CONTAINS toLower(%(a)s.researcher))))"
         )
 
         # ★ 기간(date/주차) 필터: 이게 없으면 "2026년에 이창수가 쓴 보고서"처럼
