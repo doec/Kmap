@@ -479,8 +479,9 @@ class GraphRAG:
 
         # ★ 최종 답변 생성에 쓸 LLM 모델 — 세션별로 UI에서 선택 가능
         #   (llm_util._LLM_CONFIGS 에 등록된 이름과 일치해야 함).
-        #   None 이면 llm_util 의 .env 기본값(LLM)을 그대로 사용한다.
-        self.answer_llm = None
+        #   None 이면 llm_util 의 .env 기본값(LLM, 기본은 gpt-prod/GPT-OSS 120B)을
+        #   그대로 사용한다 — 지금은 GaussO4.1을 기본 답변 모델로 쓴다.
+        self.answer_llm = 'GaussO4.1'
 
         # ★ reasoning_effort(추론 강도) — 모델마다 지원하는 값이 다르다:
         #     GPT-OSS 120B(None)     : low / medium / high

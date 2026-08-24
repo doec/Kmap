@@ -789,8 +789,8 @@ def build_chat_page(request: Request = None):
                     #   다음 질문부터 즉시 반영된다 (서버 재시작 불필요).
                     llm_select = ui.select(
                         {
-                            None:         'GPT-OSS 120B (기본)',
-                            'GaussO4.1':  'GaussO4.1',
+                            None:         'GPT-OSS 120B',
+                            'GaussO4.1':  'GaussO4.1 (기본)',
                             'Gemma4':     'Gemma4 (경량/빠름)',
                         },
                     ).props('dense outlined label="답변 생성 모델"').style('width:100%;')
