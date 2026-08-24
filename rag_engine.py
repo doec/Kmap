@@ -2296,6 +2296,15 @@ oldest_focus 판단 규칙 (매우 중요):
                      f"(질문 분석 {_t_extract:.2f}초 + 검색 {_t_retrieve:.2f}초 + 답변 생성 {_t_answer:.2f}초)")
 
         result = "".join(full_result)
+        if not result:
+            # ★ 예외 없이 스트림이 끝났는데 콘텐츠가 하나도 없는 경우(주로
+            #   reasoning_effort 가 높아 추론만 하다 응답 한도에 걸린 경우) —
+            #   llm_util 쪽에서도 logger.warning 으로 이유를 남기지만, rag 자체
+            #   디버그 채널에도 남겨서 로깅 설정과 무관하게 항상 보이게 한다.
+            self._dbg(0, f"[Debug] 경고: LLM이 답변 콘텐츠를 하나도 반환하지 않음 "
+                         f"(모델: {answer_model_name}, 추론 강도: {answer_reasoning_effort}, "
+                         f"소요 {_t_answer:.2f}초). reasoning_effort 를 낮춰(medium/low) "
+                         f"다시 시도해 보세요.")
         if result:
             self.history.append({"role": "user",      "content": query})
             self.history.append({"role": "assistant",  "content": result})

@@ -839,12 +839,30 @@ def ask_llm_stream_iter_messages(messages: list[dict],
         logger.error(f"스트림 연결 실패 ({type(e).__name__}): {e}")
         return
 
+    # ★ reasoning_effort 가 높은 모델(gpt-oss 등)은 최종 답변 전에 "추론" 토큰을
+    #   먼저 스트리밍하는데, 서버 구현에 따라 이게 content 필드가 아니라 별도
+    #   필드(예: reasoning_content)로 온다. 이 경우 최종 답변 콘텐츠가 하나도
+    #   없이(=이 함수가 아무것도 yield 못한 채) 스트림이 "정상적으로" 끝날 수 있다
+    #   — 예외가 전혀 안 나서 호출부(rag_engine.py)에도 에러 로그가 안 남고,
+    #   화면엔 그냥 "(응답을 받지 못했습니다)"만 뜬다. 이유를 알 수 있도록
+    #   content_yielded/reasoning_chunks/finish_reason 을 추적해 진단 로그를 남긴다.
+    content_yielded = False
+    reasoning_chunks = 0
+    last_finish_reason = None
     try:
         for chunk in stream:
             try:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
+                choice = chunk.choices[0]
+                if getattr(choice, 'finish_reason', None):
+                    last_finish_reason = choice.finish_reason
+                delta = choice.delta
+                content = getattr(delta, 'content', None)
+                if content:
+                    content_yielded = True
+                    yield content
+                    continue
+                if getattr(delta, 'reasoning_content', None):
+                    reasoning_chunks += 1
             except (AttributeError, IndexError):
                 continue
     except httpx.ReadTimeout:
@@ -854,6 +872,15 @@ def ask_llm_stream_iter_messages(messages: list[dict],
     except Exception as e:
         logger.error(f"스트림 파싱 오류 ({type(e).__name__}): {e}")
         return
+
+    if not content_yielded:
+        logger.warning(
+            f"스트림이 답변 콘텐츠 없이 종료됨 (모델={llm or LLM}, "
+            f"reasoning_effort={reasoning_effort}, finish_reason={last_finish_reason}, "
+            f"추론(reasoning) 청크 수={reasoning_chunks}) — reasoning_effort 가 너무 높아 "
+            f"추론만 하다가 답변 토큰에 도달하기 전에 응답 한도(max_tokens 등)에 걸렸을 "
+            f"가능성이 큽니다. reasoning_effort 를 낮춰(medium/low) 다시 시도해 보세요."
+        )
 
 
 # =============================================================================
