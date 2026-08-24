@@ -2298,13 +2298,29 @@ oldest_focus 판단 규칙 (매우 중요):
         result = "".join(full_result)
         if not result:
             # ★ 예외 없이 스트림이 끝났는데 콘텐츠가 하나도 없는 경우(주로
-            #   reasoning_effort 가 높아 추론만 하다 응답 한도에 걸린 경우) —
-            #   llm_util 쪽에서도 logger.warning 으로 이유를 남기지만, rag 자체
-            #   디버그 채널에도 남겨서 로깅 설정과 무관하게 항상 보이게 한다.
+            #   reasoning_effort 가 높은데 컨텍스트까지 길어서, 추론만 하다 응답
+            #   한도에 걸린 경우) — llm_util 쪽에서도 logger.warning 으로 이유를
+            #   남기지만, rag 자체 디버그 채널에도 남겨서 로깅 설정과 무관하게
+            #   항상 보이게 한다.
             self._dbg(0, f"[Debug] 경고: LLM이 답변 콘텐츠를 하나도 반환하지 않음 "
                          f"(모델: {answer_model_name}, 추론 강도: {answer_reasoning_effort}, "
-                         f"소요 {_t_answer:.2f}초). reasoning_effort 를 낮춰(medium/low) "
-                         f"다시 시도해 보세요.")
+                         f"컨텍스트 길이: {len(combined_context):,}자, 소요 {_t_answer:.2f}초).")
+            # ★ 화면에는 그냥 "(응답을 받지 못했습니다)"만 뜨면 사용자가 원인을 알 수
+            #   없다 — 이 경우도 하나의 답변 콘텐츠로 취급해 브라우저에 이유와
+            #   대응 방법을 그대로 보여준다. (self.history 에는 안 남긴다 — 아래
+            #   `if result:` 는 계속 빈 문자열 기준이라 실제 답변처럼 기록되지 않음)
+            failure_msg = (
+                f"⚠️ 답변을 생성하지 못했습니다.\n\n"
+                f"**원인**: 추론 강도(reasoning_effort={answer_reasoning_effort})가 켜진 상태에서 "
+                f"검색된 컨텍스트가 너무 길어({len(combined_context):,}자), 모델이 내부 추론에만 "
+                f"응답 한도를 다 써버리고 실제 답변을 한 글자도 내놓지 못했습니다 "
+                f"(소요 시간 {_t_answer:.1f}초, 오류는 아니고 정상 종료됨).\n\n"
+                f"**해결 방법**:\n"
+                f"- 사이드바에서 추론 강도를 낮춰보세요 (medium → low, 또는 low가 없으면 none)\n"
+                f"- 검색 범위를 좁혀보세요 (특정 데이터셋 탭만 선택하거나, 질문을 더 구체적으로)\n"
+                f"- 위 방법으로도 안 되면 답변 모델을 바꿔보세요 (예: Gemma4)"
+            )
+            yield {'type': 'content', 'text': failure_msg}
         if result:
             self.history.append({"role": "user",      "content": query})
             self.history.append({"role": "assistant",  "content": result})
