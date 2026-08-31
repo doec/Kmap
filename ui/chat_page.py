@@ -708,6 +708,14 @@ def build_chat_page(request: Request = None):
                     'display:flex; flex-direction:column; gap:1px; width:100%;'
                 )
 
+                # ★ 대화 목록 바로 아래 고정 링크 — 관련 Confluence 문서 바로가기.
+                #   새 탭으로 열어 현재 대화가 끊기지 않게 한다.
+                ui.link('RAG 컨플 페이지',
+                        'https://confluence.samsungds.net/spaces/ADP/pages/3673442696',
+                        new_tab=True).style(
+                    'font-size:12px; color:#71717a; text-decoration:none; padding:4px 8px;'
+                )
+
             ui.separator().style('border-color:#e2e8f0;')
 
             ui.label('검색 모드').style(
