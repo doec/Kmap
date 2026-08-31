@@ -715,7 +715,7 @@ def build_chat_page(request: Request = None):
                 #   ★ .style() 의 color 만으로는 Quasar 링크 기본 색(파란색 계통)에
                 #   가려 안 보이는 문제가 있어 !important 로 확실히 덮어쓴다.
                 ui.link('📄 RAG 컨플 페이지',
-                        'https://confluence.samsungds.net/spaces/ADP/pages/3673442696',
+                        'https://confluence.samsungds.net/spaces/SMEPD/pages/3890238163',
                         new_tab=True).style(
                     'display:flex; align-items:center; gap:6px; font-size:12px; '
                     'color:#71717a !important; text-decoration:none; padding:4px 8px;'
