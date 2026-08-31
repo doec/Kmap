@@ -305,6 +305,7 @@ class _PageState:
         self.conversations: list[dict] = []   # {id, title, messages}
         self.active_conv_id: int | None = None
         self.messages: list[dict] = []
+        self.is_generating: bool = False   # ★ 답변 생성 중 여부 — 전송 버튼을 정지 버튼으로 토글하는 데 씀
 
 
 def build_chat_page(request: Request = None):
@@ -1153,6 +1154,24 @@ def build_chat_page(request: Request = None):
             except Exception:
                 pass
 
+        # ── send / stop 버튼 아이콘·색상 토글 ─────────────────────────────────────────
+        #   전송 버튼 하나가 "전송(▲)"과 "정지(■)" 역할을 겸한다 — 생성 중이 아닐 때는
+        #   눌러도 비활성인 채로 두지 않고, 대신 클릭 시 rag.cancel() 을 호출하도록
+        #   핸들러 쪽에서 분기한다(아래 on_send_or_stop 참고). 그래서 여기선 버튼을
+        #   disable() 하지 않고 모양만 바꾼다.
+        def _set_send_btn_mode(generating: bool):
+            if generating:
+                send_btn.props('icon=stop')
+                send_btn.style('background:#ef4444; color:white; min-width:32px; min-height:32px;')
+                send_btn.tooltip('답변 생성 중단')
+            else:
+                send_btn.props('icon=arrow_upward')
+                send_btn.style(
+                    'background:linear-gradient(135deg,#6366f1,#8b5cf6);'
+                    'color:white; min-width:32px; min-height:32px;'
+                )
+                send_btn.tooltip('전송')
+
         # ── send handler ─────────────────────────────────────────────────────────────────────────────────────────
         async def on_send_message():
             query = input_box.value.strip()
@@ -1160,7 +1179,8 @@ def build_chat_page(request: Request = None):
                 return
 
             await _clear_input()
-            send_btn.disable()
+            state.is_generating = True
+            _set_send_btn_mode(True)
 
             # ★ "전체"만 선택돼 있으면 rag 쪽에는 "All" 문자열로(자동 데이터셋 선택),
             #   특정 데이터셋을 하나 이상 골랐으면 그 key 들의 리스트로 넘긴다.
@@ -1375,7 +1395,8 @@ def build_chat_page(request: Request = None):
                 )
 
             scroll_area.scroll_to(percent=1.0)
-            send_btn.enable()
+            state.is_generating = False
+            _set_send_btn_mode(False)
 
         async def _on_enter(e):
             # ★ 줄바꿈 방지(preventDefault)는 위 input_box 의 정적 @keydown 속성이
@@ -1385,5 +1406,13 @@ def build_chat_page(request: Request = None):
             if not e.args.get('shiftKey'):
                 await on_send_message()
 
-        send_btn.on('click', on_send_message)
+        async def _on_send_btn_click():
+            # ★ 버튼 하나가 상태에 따라 "전송"/"정지" 역할을 겸한다. 생성 중에
+            #   누르면 새 질문을 보내는 게 아니라 진행 중인 답변 생성을 중단한다.
+            if state.is_generating:
+                rag.cancel()
+            else:
+                await on_send_message()
+
+        send_btn.on('click', _on_send_btn_click)
         input_box.on('keydown.enter', _on_enter)

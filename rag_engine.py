@@ -2,6 +2,7 @@ import sys
 import re
 import json
 import time
+import threading
 from pathlib import Path
 from neo4j import GraphDatabase
 from concurrent.futures import ThreadPoolExecutor
@@ -500,6 +501,18 @@ class GraphRAG:
         #   현재 값이 새 모델에서 지원 안 되는 조합이 될 수 있어 실제 호출
         #   직전에 _resolve_reasoning_effort() 로 안전하게 정규화한다.
         self.answer_reasoning_effort = 'medium'
+
+        # ★ 정지 버튼 — answer_stream() 이 매 질문마다 새 Event 를 만들어 여기 담고,
+        #   여러 체크포인트(검색 완료 직후 / LLM 스트리밍 매 청크)에서 이 플래그를
+        #   확인해 정지 요청이 오면 조기 종료한다. cancel() 은 UI 스레드에서
+        #   answer_stream() 이 실행 중인 executor 스레드로 신호만 보내는 역할이라
+        #   스레드 세이프하다(threading.Event 자체가 스레드 세이프).
+        self._cancel_event = threading.Event()
+
+    def cancel(self):
+        """진행 중인 답변 생성을 중단 요청한다. 다음 체크포인트에서 정지된다
+        (검색 단계 중이면 그 단계가 끝난 뒤, 답변 생성 중이면 다음 청크에서)."""
+        self._cancel_event.set()
 
     def _dbg(self, level: int, *args, **kwargs):
         """level <= self.debug_level 일 때만 출력. 에러(level=0)는 항상 출력된다."""
@@ -1965,6 +1978,9 @@ oldest_focus 판단 규칙 (매우 중요):
         """
         self._pending_nodes = set()
         self.last_retrieved_nodes = []
+        # ★ 매 질문마다 새 Event 로 교체 — 이전 질문에서 남은 정지 신호가 이번
+        #   질문에 그대로 적용되는 일이 없도록 한다.
+        self._cancel_event = threading.Event()
 
         self._dbg(1, f"\n[Debug] ========================================")
         self._dbg(1, f"[Debug] 질문: {query}")
@@ -2065,6 +2081,14 @@ oldest_focus 판단 규칙 (매우 중요):
         self._dbg(1, f"[Debug] 검색된 노드 수: {len(self.last_retrieved_nodes)}")
         self._dbg(1, f"[Debug] ⏱ 검색 소요 시간: {_t_retrieve:.2f}초 "
                      f"(데이터셋 {len(search_targets)}개 병렬, 키워드 추출 {_t_extract:.2f}초 별도)")
+
+        # ★ 정지 버튼 체크포인트 ①: 검색까지 끝난 시점. 검색 자체(Neo4j 세션 실행 중)는
+        #   중간에 끊을 수 없어 여기서만 확인한다 — 가장 시간이 오래 걸리는 답변
+        #   생성(길게는 수백 초) 단계로 넘어가기 전에 막아주는 게 핵심이다.
+        if self._cancel_event.is_set():
+            self._dbg(1, "[Debug] 사용자 요청으로 검색 직후 중단됨")
+            yield {'type': 'content', 'text': '\n\n_(⏹ 사용자 요청으로 중단되었습니다.)_'}
+            return
 
         sections        = []
         active_datasets = []
@@ -2315,6 +2339,7 @@ oldest_focus 판단 규칙 (매우 중요):
             temperature=0.05,
             reasoning_effort=answer_reasoning_effort,
             llm=self.answer_llm,
+            cancel_event=self._cancel_event,
         ):
             if _t_first_chunk is None:
                 _t_first_chunk = time.monotonic() - _t_answer_start
@@ -2333,7 +2358,18 @@ oldest_focus 판단 규칙 (매우 중요):
                      f"(질문 분석 {_t_extract:.2f}초 + 검색 {_t_retrieve:.2f}초 + 답변 생성 {_t_answer:.2f}초)")
 
         result = "".join(full_result)
-        if not result:
+        if self._cancel_event.is_set():
+            # ★ 정지 버튼 체크포인트 ②: 답변 생성 도중 중단된 경우. 이미 스트리밍된
+            #   부분 답변(result)이 있으면 그대로 살리고 중단 표시만 덧붙인다 —
+            #   reasoning 소진/API 에러 설명을 붙이면 오히려 헷갈리므로 그 분기들은
+            #   건너뛴다(elif 로 연결하지 않고 여기서 따로 처리).
+            self._dbg(1, f"[Debug] 사용자 요청으로 답변 생성 중단됨 "
+                         f"(그때까지 받은 답변 {len(result)}자, 소요 {_t_answer:.2f}초)")
+            stop_note = "\n\n_(⏹ 사용자 요청으로 중단되었습니다.)_"
+            yield {'type': 'content', 'text': stop_note}
+            if result:
+                result += stop_note
+        elif not result:
             # ★ 예외 없이 스트림이 끝났는데 콘텐츠가 하나도 없는 경우(주로
             #   reasoning_effort 가 높은데 컨텍스트까지 길어서, 추론만 하다 응답
             #   한도에 걸린 경우) — llm_util 쪽에서도 logger.warning 으로 이유를

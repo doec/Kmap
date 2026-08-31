@@ -834,10 +834,14 @@ def ask_llm_messages(messages: list[dict],
 
 
 def ask_llm_stream_iter_messages(messages: list[dict],
-                                  temperature=0.05, reasoning_effort="medium", llm=None):
+                                  temperature=0.05, reasoning_effort="medium", llm=None,
+                                  cancel_event=None):
     """
     messages 리스트를 직접 받아 스트리밍으로 chunk 단위 yield (제너레이터).
     대화 히스토리 포함 호출용 (rag_engine.py의 답변 생성이 이 함수를 사용).
+
+    cancel_event: threading.Event. 매 chunk 마다 확인해서 set 돼 있으면 즉시
+        스트림을 닫고(가능하면) 중단한다 — 정지 버튼 지원용.
 
     Parameters:
         messages: [{"role": ..., "content": ...}, ...] 형태의 대화 메시지 목록
@@ -939,6 +943,15 @@ def ask_llm_stream_iter_messages(messages: list[dict],
 
     try:
         for chunk in stream:
+            if cancel_event is not None and cancel_event.is_set():
+                # ★ 정지 버튼 — 다음 chunk 대신 여기서 즉시 빠져나온다. 스트림을
+                #   명시적으로 닫아 서버/네트워크 자원도 최대한 빨리 정리한다
+                #   (닫기 자체가 실패해도 중단 자체는 계속 진행).
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                return
             try:
                 choice = chunk.choices[0]
                 if getattr(choice, 'finish_reason', None):
