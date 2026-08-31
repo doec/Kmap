@@ -842,12 +842,22 @@ def ask_llm_stream_iter_messages(messages: list[dict],
         )
     except httpx.TimeoutException:
         logger.error(f"스트림 연결 타임아웃: {llm or LLM}")
+        yield f"[ERROR: {llm or LLM} 연결 타임아웃 — API 서버가 응답하지 않습니다. URL/네트워크를 확인하세요.]"
         return
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP 에러 {e.response.status_code}: {e}")
+        yield f"[ERROR: {llm or LLM} HTTP {e.response.status_code} — {e}]"
         return
     except Exception as e:
+        # ★ 이 예외는 API 호출 자체(연결/인증/요청 형식 등)가 즉시 실패한 경우다.
+        #   아래쪽의 "reasoning_effort 소진" 진단과는 성격이 다르므로(그쪽은 연결은
+        #   성공하고 정상적으로 스트림이 끝났는데 콘텐츠가 없는 경우), 호출부가
+        #   구분할 수 있도록 예외 메시지를 그대로 [ERROR: ...] 콘텐츠로 넘긴다
+        #   (예전엔 여기서 그냥 return 만 해서 콘텐츠가 0개인 것과 구분이 안 됐다 —
+        #   그래서 실제로는 즉시 연결 실패한 건데도 "reasoning_effort 가 너무 높아서"
+        #   라는 엉뚱한 설명이 화면에 뜨는 문제가 있었다).
         logger.error(f"스트림 연결 실패 ({type(e).__name__}): {e}")
+        yield f"[ERROR: {llm or LLM} 연결 실패 ({type(e).__name__}): {e}]"
         return
 
     # ★ reasoning_effort 가 높은 모델(gpt-oss 등)은 최종 답변 전에 "추론" 토큰을

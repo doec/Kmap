@@ -2315,8 +2315,8 @@ oldest_focus 판단 규칙 (매우 중요):
                          f"컨텍스트 길이: {len(combined_context):,}자, 소요 {_t_answer:.2f}초).")
             # ★ 화면에는 그냥 "(응답을 받지 못했습니다)"만 뜨면 사용자가 원인을 알 수
             #   없다 — 이 경우도 하나의 답변 콘텐츠로 취급해 브라우저에 이유와
-            #   대응 방법을 그대로 보여준다. (self.history 에는 안 남긴다 — 아래
-            #   `if result:` 는 계속 빈 문자열 기준이라 실제 답변처럼 기록되지 않음)
+            #   대응 방법을 그대로 보여준다. (아래 history 저장은 "[ERROR:"로
+            #   시작하지 않는 실제 답변에만 적용되므로 이 메시지는 안 남는다)
             failure_msg = (
                 f"⚠️ 답변을 생성하지 못했습니다.\n\n"
                 f"**원인**: 추론 강도(reasoning_effort={answer_reasoning_effort})가 켜진 상태에서 "
@@ -2329,7 +2329,15 @@ oldest_focus 판단 규칙 (매우 중요):
                 f"- 위 방법으로도 안 되면 답변 모델을 바꿔보세요 (예: Gemma4)"
             )
             yield {'type': 'content', 'text': failure_msg}
-        if result:
+        elif result.startswith("[ERROR:"):
+            # ★ API 호출 자체가 즉시 실패한 경우(연결 거부/타임아웃/HTTP 에러 등).
+            #   llm_util 이 이미 이 메시지를 스트림 콘텐츠로 내보내(위 for 루프에서
+            #   화면에 표시까지 끝남) result 에 담겨 있다 — reasoning 소진과는 다른
+            #   원인이라 위의 "컨텍스트가 길어서…" 설명을 붙이면 오히려 헷갈린다.
+            #   실제 답변이 아니므로 history 에는 안 남긴다.
+            self._dbg(0, f"[Debug] 경고: LLM 호출 자체가 실패함 (모델: {answer_model_name}, "
+                         f"소요 {_t_answer:.2f}초) — {result}")
+        if result and not result.startswith("[ERROR:"):
             self.history.append({"role": "user",      "content": query})
             self.history.append({"role": "assistant",  "content": result})
 
