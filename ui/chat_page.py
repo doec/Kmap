@@ -708,12 +708,17 @@ def build_chat_page(request: Request = None):
                     'display:flex; flex-direction:column; gap:1px; width:100%;'
                 )
 
+                ui.separator().style('border-color:#e2e8f0; margin:4px 0;')
+
                 # ★ 대화 목록 바로 아래 고정 링크 — 관련 Confluence 문서 바로가기.
                 #   새 탭으로 열어 현재 대화가 끊기지 않게 한다.
-                ui.link('RAG 컨플 페이지',
+                #   ★ .style() 의 color 만으로는 Quasar 링크 기본 색(파란색 계통)에
+                #   가려 안 보이는 문제가 있어 !important 로 확실히 덮어쓴다.
+                ui.link('📄 RAG 컨플 페이지',
                         'https://confluence.samsungds.net/spaces/ADP/pages/3673442696',
                         new_tab=True).style(
-                    'font-size:12px; color:#71717a; text-decoration:none; padding:4px 8px;'
+                    'display:flex; align-items:center; gap:6px; font-size:12px; '
+                    'color:#71717a !important; text-decoration:none; padding:4px 8px;'
                 )
 
             ui.separator().style('border-color:#e2e8f0;')
