@@ -454,6 +454,16 @@ REASONING_EFFORT_OPTIONS = {
     'Gemma4':    ['none', 'medium'],
 }
 
+# ★ 일부 답변 모델은 사내 게이트웨이 모델들보다 훨씬 짧은 컨텍스트 윈도우를 가진
+#   서버에 떠 있다 — 그대로 보내면 API 가 "maximum context length" 400 에러를
+#   낸다(실측: Qwen3.8-27B, vLLM 32768 토큰 한도). 토크나이저 없이 정확한 토큰
+#   수는 알 수 없으므로, "한글/영문 혼용 텍스트는 대략 1토큰≈2자"라는 보수적인
+#   경험칙으로 안전한 문자 수 상한을 잡아 초과 시 답변 컨텍스트를 잘라낸다.
+#   여기 없는 모델(None/GaussO4.1/Gemma4)은 지금까지 문제가 없었으므로 제한 없음.
+MAX_CONTEXT_CHARS_BY_MODEL = {
+    'Qwen3.8': 40000,  # vLLM 32768 토큰 한도 — 시스템 프롬프트/이전 대화/질문/출력 몫을 뺀 여유값
+}
+
 
 class GraphRAG:
     def __init__(self):
@@ -2079,6 +2089,25 @@ oldest_focus 판단 규칙 (매우 중요):
                 self._dbg(1, f"[Debug] {ds} 컨텍스트 없음(_NO_RESULT) → LLM 프롬프트에서 제외됨")
 
         combined_context = "\n\n".join(sections) if sections else _NO_RESULT
+
+        # ★ 답변 모델의 컨텍스트 윈도우 한도 대응 (MAX_CONTEXT_CHARS_BY_MODEL 참고).
+        #   데이터셋 하나만 통째로 자르면 뒤쪽 데이터셋이 통째로 사라지므로,
+        #   섹션(데이터셋)별로 비례 배분해서 잘라 모든 데이터셋이 조금씩이라도
+        #   살아남게 한다.
+        max_context_chars = MAX_CONTEXT_CHARS_BY_MODEL.get(self.answer_llm)
+        if max_context_chars and len(combined_context) > max_context_chars:
+            self._dbg(0, f"[Debug] 경고: 답변 모델({self.answer_llm}) 컨텍스트 상한"
+                         f"({max_context_chars:,}자) 초과 ({len(combined_context):,}자) "
+                         f"→ 데이터셋별로 비례 축소")
+            ratio = max_context_chars / len(combined_context)
+            trimmed_sections = []
+            for sec in sections:
+                keep = max(200, int(len(sec) * ratio))
+                if len(sec) < keep:
+                    trimmed_sections.append(sec)
+                else:
+                    trimmed_sections.append(sec[:keep] + "\n…(모델 컨텍스트 한도로 생략)")
+            combined_context = "\n\n".join(trimmed_sections)
 
         if active_datasets:
             prompt_sections = []
