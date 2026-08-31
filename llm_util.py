@@ -888,6 +888,55 @@ def ask_llm_stream_iter_messages(messages: list[dict],
     content_yielded = False
     reasoning_chunks = 0
     last_finish_reason = None
+
+    # ★ Qwen3 계열(및 llama.cpp로 서빙되는 여러 오픈모델)은 "생각 중" 내용을
+    #   reasoning_content 같은 별도 필드가 아니라 content 안에 <think>...</think>
+    #   태그로 직접 섞어 보낸다 — 그래서 답변 화면에 내부 추론 과정이 그대로
+    #   노출된다. 태그가 여러 chunk 에 걸쳐 쪼개져 도착할 수 있어(예: "<th" 다음
+    #   chunk 에 "ink>") 작은 버퍼를 두고 태그 밖의 텍스트만 걸러서 내보낸다.
+    think_buf = ''
+    in_think = False
+    THINK_OPEN, THINK_CLOSE = '<think>', '</think>'
+
+    def _filter_think(piece: str) -> str:
+        """content 조각에서 <think>...</think> 블록을 제거하고 나머지만 반환.
+        열린 태그를 아직 못 닫은 상태는 in_think 로, 태그가 청크 경계에서
+        잘린 경우는 think_buf(꼬리 보류분)로 다음 호출까지 이어서 처리한다."""
+        nonlocal think_buf, in_think
+        think_buf += piece
+        out = []
+        while True:
+            if not in_think:
+                idx = think_buf.find(THINK_OPEN)
+                if idx == -1:
+                    # '<think>' 의 접두사로 끝날 수 있는 꼬리만 다음 조각과 합치기 위해 보류
+                    safe_len = len(think_buf)
+                    for k in range(min(len(THINK_OPEN) - 1, len(think_buf)), 0, -1):
+                        if think_buf.endswith(THINK_OPEN[:k]):
+                            safe_len = len(think_buf) - k
+                            break
+                    out.append(think_buf[:safe_len])
+                    think_buf = think_buf[safe_len:]
+                    break
+                out.append(think_buf[:idx])
+                think_buf = think_buf[idx + len(THINK_OPEN):]
+                in_think = True
+            else:
+                idx = think_buf.find(THINK_CLOSE)
+                if idx == -1:
+                    # 닫는 태그를 아직 못 찾음: 추론 내용 자체는 버리고, 닫는 태그의
+                    # 접두사가 될 수 있는 꼬리만 남겨 버퍼가 무한정 커지지 않게 한다.
+                    keep = 0
+                    for k in range(min(len(THINK_CLOSE) - 1, len(think_buf)), 0, -1):
+                        if think_buf.endswith(THINK_CLOSE[:k]):
+                            keep = k
+                            break
+                    think_buf = think_buf[-keep:] if keep else ''
+                    break
+                think_buf = think_buf[idx + len(THINK_CLOSE):]
+                in_think = False
+        return ''.join(out)
+
     try:
         for chunk in stream:
             try:
@@ -897,8 +946,10 @@ def ask_llm_stream_iter_messages(messages: list[dict],
                 delta = choice.delta
                 content = getattr(delta, 'content', None)
                 if content:
-                    content_yielded = True
-                    yield content
+                    visible = _filter_think(content)
+                    if visible:
+                        content_yielded = True
+                        yield visible
                     continue
                 if getattr(delta, 'reasoning_content', None):
                     reasoning_chunks += 1
