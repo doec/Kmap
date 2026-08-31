@@ -164,6 +164,17 @@ _LLM_CONFIGS = {
         "cred_env"     : "CREDENTIAL_KEY_Gemma4",
         "sysname_env"  : "SEND_SYSTEM_NAME_Gemma4",
     },
+    # ★ 로컬(사내망) vLLM 서버로 띄운 Qwen — 삼성 게이트웨이(gpt-*/GaussO4.1/Gemma4)와
+    #   달리 x-dep-ticket 인증이 필요 없는 순수 OpenAI 호환 서버다. cred_env 는
+    #   .env 에 없으면 빈 문자열이 되는데, _build_client() 가 그 값을 그대로
+    #   x-dep-ticket 헤더에 넣어 보내도 vLLM 은 모르는 헤더라 그냥 무시하므로 무해하다.
+    "Qwen3.8": {
+        "model_env"    : "LLM_MODEL_Qwen38",
+        "model_default": "Qwen/Qwen3.8-27B",
+        "url_env"      : "LLM_API_URL_Qwen38",
+        "cred_env"     : "CREDENTIAL_KEY_Qwen38",
+        "sysname_env"  : None,
+    },
 }
 
 

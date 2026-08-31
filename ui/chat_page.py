@@ -805,6 +805,7 @@ def build_chat_page(request: Request = None):
                             None:         'GPT-OSS 120B',
                             'GaussO4.1':  'GaussO4.1 (기본)',
                             'Gemma4':     'Gemma4 (경량/빠름)',
+                            'Qwen3.8':    'Qwen3.8-27B',
                         },
                     ).props('dense outlined label="답변 생성 모델"').style('width:100%;')
                     # ★ 채팅창 하단의 chat_llm_select 와 양방향 바인딩 — 둘 중 어디서
@@ -923,6 +924,7 @@ def build_chat_page(request: Request = None):
                                 None:        'GPT-OSS 120B',
                                 'GaussO4.1': 'GaussO4.1',
                                 'Gemma4':    'Gemma4 (경량)',
+                                'Qwen3.8':   'Qwen3.8-27B',
                             },
                         ).props('dense borderless options-dense').style(
                             'font-size:12px; color:#94a3b8; min-width:120px;'
