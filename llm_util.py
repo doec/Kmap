@@ -175,6 +175,17 @@ _LLM_CONFIGS = {
         "cred_env"     : "CREDENTIAL_KEY_Qwen38",
         "sysname_env"  : None,
     },
+    # ★ 로컬 llama.cpp 서버(GGUF)로 띄운 MiniMax-M3 — Qwen3.8과 마찬가지로 순수
+    #   OpenAI 호환 서버이지만, 이쪽은 실제 API 키 인증이 필요하다(Qwen3.8은
+    #   무인증). cred_env 값은 _build_client()에서 이제 실제 Authorization: Bearer
+    #   헤더로 쓰인다(아래 _build_client 변경 참고).
+    "MiniMax-M3": {
+        "model_env"    : "LLM_MODEL_MiniMaxM3",
+        "model_default": r".\MiniMax-M3-IQ4_XS\MiniMax-M3-IQ4_MS-00001-of-00006.gguf",
+        "url_env"      : "LLM_API_URL_MiniMaxM3",
+        "cred_env"     : "CREDENTIAL_KEY_MiniMaxM3",
+        "sysname_env"  : None,
+    },
 }
 
 
@@ -242,8 +253,15 @@ def _build_client(cfg: dict) -> OpenAI:
     OpenAI client 생성 (내부용).
 
     Samsung 내부망 설정:
-      - api_key   : openai 라이브러리 필수값이지만 실제 인증은 x-dep-ticket으로 처리
-                    → 더미값 "api_key" 사용 (DS API HUB 예제 동일 방식)
+      - api_key   : openai 라이브러리 필수값. Samsung 게이트웨이는 실제 인증을
+                    x-dep-ticket 헤더로 처리하므로 credential_key 가 없으면
+                    더미값 "api_key" 를 쓴다(DS API HUB 예제 동일 방식).
+                    ★ 반면 MiniMax-M3 처럼 표준 OpenAI 호환 서버는 Authorization:
+                    Bearer 헤더로 인증하는데, openai 라이브러리는 여기 넘긴
+                    api_key 로 그 헤더를 자동 생성해준다 — 그래서 credential_key
+                    가 있으면(=.env 에 실제 키가 설정돼 있으면) 그대로 api_key 로
+                    쓴다. Samsung 게이트웨이 쪽은 Authorization 헤더를 안 보므로
+                    이렇게 바꿔도 기존 동작에 영향 없다.
       - verify    : False → Samsung 내부망 self-signed 인증서 검증 비활성화
       - mounts    : None  → 삼성 사내 프록시 우회, 직접 연결
                     (httpx 0.28+ 문법. 이전 버전은 proxies= 사용)
@@ -263,7 +281,7 @@ def _build_client(cfg: dict) -> OpenAI:
         timeout=httpx.Timeout(600.0, connect=60.0),    # 최대한 긴 타임아웃 설정
     )
     return OpenAI(
-        api_key="api_key",
+        api_key=cfg["credential_key"] or "api_key",
         base_url=cfg["base_url"],
         default_headers=headers,
         http_client=http_client,
@@ -294,7 +312,7 @@ def _build_async_client(cfg: dict) -> AsyncOpenAI:
         timeout=httpx.Timeout(600.0, connect=60.0),
     )
     return AsyncOpenAI(
-        api_key="api_key",
+        api_key=cfg["credential_key"] or "api_key",
         base_url=cfg["base_url"],
         default_headers=headers,
         http_client=http_client,
