@@ -1344,6 +1344,16 @@ def build_chat_page(request: Request = None):
             full_text    = ''
             chunk_buffer = ''
             chunk_count  = 0
+            # ★ 스트리밍 중에는 stream_el(그냥 텍스트, 마크다운 파싱 없음)을 보여주고,
+            #   스트림이 완전히 끝난 뒤에야 md_element(실제 렌더링)를 한 번만 만든다.
+            #   예전엔 5청크마다 누적 텍스트 전체를 ui.markdown 으로 다시 파싱했는데,
+            #   인용문 안에 중첩 리스트가 있는 것처럼 복잡한 구조는 텍스트가 조금씩
+            #   늘어날 때마다 "리스트로 인식 ↔ 아직 미완성이라 문단으로 인식"을
+            #   오가며 레이아웃 구조 자체가 계속 바뀌어 화면이 위아래로 들썩이는
+            #   문제가 있었다(실측). 스트리밍 중엔 구조 해석이 필요 없는 순수
+            #   텍스트로만 보여주면 이 문제가 원천적으로 없다 — 수식(MathJax)도
+            #   같은 이유로 스트림 종료 후 한 번만 typeset 하고 있다(아래 참고).
+            stream_el    = None
             md_element   = None
 
             _SCROLL_JS = """
@@ -1383,8 +1393,8 @@ def build_chat_page(request: Request = None):
                 if event is None:
                     if chunk_buffer:
                         full_text += chunk_buffer
-                        if md_element:
-                            md_element.set_content(full_text)
+                        if stream_el:
+                            stream_el.set_text(full_text)
                     break
 
                 # answer_stream 은 dict 이벤트를 내보낸다. (구버전 호환: 문자열이면 content 취급)
@@ -1396,18 +1406,21 @@ def build_chat_page(request: Request = None):
 
                 # 진행 상태 이벤트: 상태줄만 갱신하고 다음 이벤트 대기
                 if etype == 'status':
-                    if md_element is None:      # 아직 답변 시작 전일 때만 표시
+                    if stream_el is None:      # 아직 답변 시작 전일 때만 표시
                         status_lbl.set_text(etext)
                         await asyncio.sleep(0)
                     continue
 
                 chunk = etext
 
-                # first content chunk: replace status box with markdown element
-                if md_element is None:
+                # first content chunk: 상태 박스를 지우고 순수 텍스트 스트리밍 엘리먼트로 교체
+                if stream_el is None:
                     status_box.delete()
                     with ai_col_ref:
-                        md_element = ui.markdown('', extras=['tables', 'fenced-code-blocks'])
+                        stream_el = ui.label('').style(
+                            'white-space:pre-wrap; word-break:break-word; '
+                            'font-size:14px; line-height:1.6;'
+                        )
 
                 chunk_buffer += chunk
                 chunk_count  += 1
@@ -1419,26 +1432,30 @@ def build_chat_page(request: Request = None):
                     combined = _REPEAT_RE.sub('', full_text + chunk_buffer)
                     full_text, chunk_buffer = combined, ''
                     full_text += "\n\n_(반복 오류가 감지되어 답변 생성을 중단했습니다. 다시 질문해 주세요.)_"
-                    md_element.set_content(full_text)
+                    stream_el.set_text(full_text)
                     print("[Debug] LLM 응답 반복 루프 감지 → 스트림 중단")
                     break
 
                 if chunk_count % 5 == 0:
                     full_text    += chunk_buffer
                     chunk_buffer  = ''
-                    md_element.set_content(full_text + '▌')
+                    stream_el.set_text(full_text + '▌')
                     try:
                         await _page_client.run_javascript(_SCROLL_JS)
                     except Exception:
                         pass
                     await asyncio.sleep(0)
 
-            if md_element is None:
+            # ★ 스트림이 완전히 끝난 뒤 딱 한 번만 실제 마크다운으로 렌더링한다
+            #   (위 stream_el 은 순수 텍스트였으므로 여기서 처음 구조가 잡힌다).
+            if stream_el is None:
                 status_box.delete()
                 with ai_col_ref:
                     md_element = ui.markdown('(응답을 받지 못했습니다)')
             else:
-                md_element.set_content(_linkify(full_text))
+                stream_el.delete()
+                with ai_col_ref:
+                    md_element = ui.markdown(_linkify(full_text), extras=['tables', 'fenced-code-blocks'])
 
             # 답변이 최종 확정된 뒤 수식(LaTeX)을 typeset (스트리밍 중엔 하지 않아 깜빡임 방지)
             try:
