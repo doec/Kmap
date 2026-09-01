@@ -42,24 +42,32 @@ _DOI_RE = re.compile(
     re.IGNORECASE
 )
 
-# ★ 마크다운 이미지(![대체텍스트](URL))가 사내 이미지 서버(Confluence 첨부 등)를
-#   가리킬 때, 페이지 안에 <img> 로 인라인 로드하면 브라우저가 Referer 헤더로
-#   "KMap 도메인에서 왔다"는 걸 같이 보내는데, 서버가 이 Referer 를 보고
-#   403 으로 차단하는 경우가 있다(실측: 깨진 이미지 아이콘으로 뜨지만 새 탭에서
-#   URL 을 직접 열면 정상적으로 보임 — Referer 유무 차이가 원인이라는 뜻).
-#   markdown2 가 자동으로 만드는 <img> 태그엔 속성을 못 끼워넣으므로, 이미지
-#   문법을 직접 raw HTML <img referrerpolicy="no-referrer"> 로 바꿔서 브라우저가
-#   아예 Referer 를 안 보내게 한다.
+# ★ 마크다운 이미지(![대체텍스트](URL))나 원문에 이미 있던 raw <img> HTML 태그가
+#   Confluence 첨부 이미지를 가리킬 때, 페이지 안에 <img> 로 인라인 로드하면
+#   항상 깨진다 — Network 탭으로 실측 확인: 302로 로그인 페이지로 리다이렉트됨.
+#   Confluence 로그인 쿠키가 SameSite=Lax 라서, 새 탭에서 직접 열 때(최상위
+#   탐색)는 쿠키가 전송돼 인증되지만 KMap 페이지 안의 <img>(하위 리소스 요청)
+#   에는 쿠키가 아예 안 실린다 — Referer 문제가 아니라서 referrerpolicy 로는
+#   못 고친다. 서버(Confluence)의 쿠키 정책이라 페이지 쪽에서 우회 불가.
+#   ★ 그래서 이 도메인 이미지는 애초에 <img> 로 만들지 않고, 처음부터 클릭하면
+#   새 탭에서 열리는 링크로 무조건 변환한다(새 탭 = 최상위 탐색이라 항상 보임).
+_CONFLUENCE_IMG_DOMAIN = 'confluence.samsungds.net'
 _MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\((\S+?)\)')
-
-# ★ 위 마크다운 이미지 변환은 LLM이 진짜 마크다운 문법(![]())으로 이미지를 낸
-#   경우만 잡는다. 그런데 실측해보니 LLM이 Confluence 원문에 이미 있던 raw
-#   <img src="..."> HTML 태그를 그대로 답변에 옮겨 적는 경우가 있었다 — 이건
-#   markdown2 가 raw HTML 로 그대로 통과시켜버려서 referrerpolicy 가 안 붙은
-#   채 렌더링됐다(실측: 변환이 전혀 적용 안 된 <img> 가 그대로 나옴). 그래서
-#   이미 <img> 태그인데 referrerpolicy 가 없는 경우도 별도로 잡아서 속성만
-#   끼워넣는다.
 _RAW_IMG_TAG_RE = re.compile(r'<img\b(?![^>]*\breferrerpolicy=)([^>]*)>', re.IGNORECASE)
+_IMG_SRC_ATTR_RE = re.compile(r'\bsrc=["\']([^"\']+)["\']', re.IGNORECASE)
+_IMG_ALT_ATTR_RE = re.compile(r'\balt=["\']([^"\']*)["\']', re.IGNORECASE)
+
+
+def _img_or_link_html(src: str, alt: str) -> str:
+    """이미지를 그대로 <img> 로 만들지, 클릭하면 새 탭에서 열리는 링크로 만들지
+    도메인으로 결정한다. src/alt 는 여기서 한 번만 이스케이프한다."""
+    src_esc = src.replace('"', '%22')
+    alt_esc = (alt or '').replace('"', '&quot;')
+    if _CONFLUENCE_IMG_DOMAIN in src:
+        return (f'<a href="{src_esc}" target="_blank" rel="noopener noreferrer" '
+                f'style="color:#6366f1; text-decoration:underline;">'
+                f'🖼️ {alt_esc or "이미지"} (새 탭에서 보기)</a>')
+    return f'<img src="{src_esc}" alt="{alt_esc}" referrerpolicy="no-referrer" style="max-width:100%;">'
 
 
 # 수식 구분자 변환용 정규식.
@@ -204,13 +212,22 @@ def _linkify(text: str) -> str:
 
     def _process(t: str) -> str:
         t = _convert_math_delims(t)
+
         def _md_image_to_html(m: re.Match) -> str:
-            alt = m.group(1).replace('"', '&quot;')
-            src = m.group(2).replace('"', '%22')
-            return (f'<img src="{src}" alt="{alt}" '
-                    f'referrerpolicy="no-referrer" style="max-width:100%;">')
+            return _img_or_link_html(m.group(2), m.group(1))
+
+        def _raw_img_to_html(m: re.Match) -> str:
+            attrs = m.group(1)
+            src_m = _IMG_SRC_ATTR_RE.search(attrs)
+            src = src_m.group(1) if src_m else ''
+            if _CONFLUENCE_IMG_DOMAIN in src:
+                alt_m = _IMG_ALT_ATTR_RE.search(attrs)
+                alt = alt_m.group(1) if alt_m else ''
+                return _img_or_link_html(src, alt)
+            return f'<img referrerpolicy="no-referrer"{attrs}>'
+
         t = _MD_IMAGE_RE.sub(_md_image_to_html, t)
-        t = _RAW_IMG_TAG_RE.sub(lambda m: f'<img referrerpolicy="no-referrer"{m.group(1)}>', t)
+        t = _RAW_IMG_TAG_RE.sub(_raw_img_to_html, t)
         t = _BARE_URL_RE.sub(lambda m: f'[{m.group(1)}]({m.group(1)})', t)
         t = _DOI_RE.sub(
             lambda m: f'[{m.group(1)}](https://doi.org/{m.group(2)})', t
