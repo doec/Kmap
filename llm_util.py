@@ -512,51 +512,23 @@ def ask_llm(USER_MESSAGE, SYSTEM_PROMPT="Semiconductor related workers",
 #   # 특정 모델로 호출
 #   result = ask_llm_img("그래프의 x축 값을 읽어줘", "./graph.jpg", llm="gpt-prod")
 # =============================================================================
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
-)
-def ask_llm_img(USER_MESSAGE, IMAGE_PATH,
-                SYSTEM_PROMPT="Semiconductor related workers",
-                temperature=0.05, reasoning_effort="medium", llm=None) -> Optional[str]:
+_IMAGE_MIME_MAP = {
+    "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "png": "image/png",  "gif":  "image/gif",
+    "webp": "image/webp",
+}
+
+
+def _ask_llm_img_from_base64(USER_MESSAGE, image_base64, mime_type,
+                              SYSTEM_PROMPT, temperature, reasoning_effort, llm) -> Optional[str]:
     """
-    이미지 포함 호출.
+    이미지 포함 호출의 공용 구현부.
 
-    Parameters:
-        USER_MESSAGE: 사용자 입력 메시지
-        IMAGE_PATH: 이미지 파일 경로
-        SYSTEM_PROMPT: 시스템 프롬프트 (기본값: "Semiconductor related workers")
-        temperature: 생성 다양성 (0.0~1.0, 기본값 0.05)
-        reasoning_effort: 추론 깊이 ("low" / "medium" / "high", 기본값 "medium")
-        llm: 사용할 모델명. None이면 .env의 LLM 기본값
-
-    Returns:
-        str: LLM 응답 문자열 (```json 코드블록 자동 제거)
-        None: 호출 실패 시
-
-    Note:
-        지원 포맷: jpg, jpeg, png, gif, webp
+    ask_llm_img()(파일 경로 입력)와 ask_llm_img_base64()(base64 문자열 직접 입력)는
+    "이미지를 어디서 가져오는지"만 다르고, base64 인코딩 이후의 메시지 구성/API
+    호출/에러 처리는 완전히 동일하므로 여기 하나로 모아 중복을 없앤다.
     """
     client, cfg = get_client(llm)
-
-    try:
-        with open(IMAGE_PATH, "rb") as f:
-            image_base64 = base64.b64encode(f.read()).decode("utf-8")
-    except FileNotFoundError:
-        logger.error(f"이미지 파일을 찾을 수 없음: {IMAGE_PATH}")
-        return None
-    except Exception as e:
-        logger.error(f"이미지 파일 읽기 실패: {e}")
-        return None
-
-    ext = str(IMAGE_PATH).rsplit(".", 1)[-1].lower()
-    mime_map = {
-        "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "png": "image/png",  "gif":  "image/gif",
-        "webp": "image/webp",
-    }
-    mime_type = mime_map.get(ext, "image/jpeg")
 
     try:
         response = client.chat.completions.create(
@@ -596,6 +568,115 @@ def ask_llm_img(USER_MESSAGE, IMAGE_PATH,
         return None
 
     return strip_json_codeblock(content)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+)
+def ask_llm_img(USER_MESSAGE, IMAGE_PATH,
+                SYSTEM_PROMPT="Semiconductor related workers",
+                temperature=0.05, reasoning_effort="medium", llm=None) -> Optional[str]:
+    """
+    이미지 포함 호출 (파일 경로).
+
+    Parameters:
+        USER_MESSAGE: 사용자 입력 메시지
+        IMAGE_PATH: 이미지 파일 경로
+        SYSTEM_PROMPT: 시스템 프롬프트 (기본값: "Semiconductor related workers")
+        temperature: 생성 다양성 (0.0~1.0, 기본값 0.05)
+        reasoning_effort: 추론 깊이 ("low" / "medium" / "high", 기본값 "medium")
+        llm: 사용할 모델명. None이면 .env의 LLM 기본값
+
+    Returns:
+        str: LLM 응답 문자열 (```json 코드블록 자동 제거)
+        None: 호출 실패 시
+
+    Note:
+        지원 포맷: jpg, jpeg, png, gif, webp
+        이미지가 이미 base64 문자열로 있다면(파일로 저장돼 있지 않다면)
+        ask_llm_img_base64() 를 쓰세요 — 디스크에 쓰고 다시 읽는 과정 없이 바로 호출됩니다.
+    """
+    try:
+        with open(IMAGE_PATH, "rb") as f:
+            image_base64 = base64.b64encode(f.read()).decode("utf-8")
+    except FileNotFoundError:
+        logger.error(f"이미지 파일을 찾을 수 없음: {IMAGE_PATH}")
+        return None
+    except Exception as e:
+        logger.error(f"이미지 파일 읽기 실패: {e}")
+        return None
+
+    ext = str(IMAGE_PATH).rsplit(".", 1)[-1].lower()
+    mime_type = _IMAGE_MIME_MAP.get(ext, "image/jpeg")
+
+    return _ask_llm_img_from_base64(
+        USER_MESSAGE, image_base64, mime_type,
+        SYSTEM_PROMPT, temperature, reasoning_effort, llm,
+    )
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+)
+def ask_llm_img_base64(USER_MESSAGE, image_base64,
+                        image_format="png",
+                        SYSTEM_PROMPT="Semiconductor related workers",
+                        temperature=0.05, reasoning_effort="medium", llm=None) -> Optional[str]:
+    """
+    이미지 포함 호출 (base64 문자열 직접 입력).
+
+    ask_llm_img() 는 로컬 파일 경로가 있어야 하는데, 이미 메모리상에 base64로
+    인코딩된 이미지(예: 클립보드 붙여넣기, 웹에서 받은 이미지, DB에 base64로
+    저장된 이미지)를 처리할 때는 굳이 파일로 저장했다 다시 읽을 필요 없이 이 함수로
+    바로 호출하면 된다.
+
+    Parameters:
+        USER_MESSAGE: 사용자 입력 메시지
+        image_base64: base64 인코딩된 이미지 문자열.
+            "data:image/png;base64,...." 형태의 데이터 URL을 통째로 넘겨도 되고
+            (접두사를 자동으로 인식해 떼어내고 image_format 도 그 안의 값으로
+            덮어씀), 순수 base64 페이로드만 넘겨도 된다.
+        image_format: 이미지 포맷 ("png"/"jpg"/"jpeg"/"gif"/"webp", 기본값 "png").
+            image_base64 가 데이터 URL이 아니라 순수 페이로드일 때만 사용된다
+            (파일 경로가 없어 확장자로 추측할 수 없으므로 직접 지정).
+        SYSTEM_PROMPT: 시스템 프롬프트 (기본값: "Semiconductor related workers")
+        temperature: 생성 다양성 (0.0~1.0, 기본값 0.05)
+        reasoning_effort: 추론 깊이 ("low" / "medium" / "high", 기본값 "medium")
+        llm: 사용할 모델명. None이면 .env의 LLM 기본값
+
+    Returns:
+        str: LLM 응답 문자열 (```json 코드블록 자동 제거)
+        None: 호출 실패 시 (base64 디코딩 자체가 안 되는 값이 들어온 경우 포함)
+    """
+    mime_type = _IMAGE_MIME_MAP.get(str(image_format).lower(), "image/png")
+
+    # ★ 데이터 URL("data:image/png;base64,....")을 그대로 넘기는 경우를 대비해
+    #   접두사를 인식해서 떼어내고, 그 안에 적힌 실제 mime 타입으로 덮어쓴다.
+    if image_base64.startswith("data:"):
+        try:
+            header, image_base64 = image_base64.split(",", 1)
+            mime_type = header.split(";")[0].removeprefix("data:") or mime_type
+        except ValueError:
+            logger.error("잘못된 데이터 URL 형식의 이미지 입력")
+            return None
+
+    # ★ 유효하지 않은 base64 문자열이면 API 호출까지 가지 않고 여기서 바로 실패
+    #   처리한다 — 그대로 보내면 게이트웨이가 모호한 400 에러를 돌려줘 원인
+    #   파악이 어려워진다.
+    try:
+        base64.b64decode(image_base64, validate=True)
+    except Exception as e:
+        logger.error(f"유효하지 않은 base64 이미지 데이터: {e}")
+        return None
+
+    return _ask_llm_img_from_base64(
+        USER_MESSAGE, image_base64, mime_type,
+        SYSTEM_PROMPT, temperature, reasoning_effort, llm,
+    )
 
 
 # =============================================================================
