@@ -593,6 +593,39 @@ def build_chat_page(request: Request = None):
             }
         });
 
+        // ★ 답변 안의 <img> 는 Confluence 등 사내 이미지 서버를 가리키는 경우가
+        //   있는데, 페이지 안에 인라인으로 로드하면 브라우저가 Referer 헤더로
+        //   "KMap 도메인에서 왔다"는 걸 같이 보내서 403으로 차단되는 경우가 있다
+        //   (새 탭에서 URL을 직접 열면 정상 로드되는 게 이 증상의 특징).
+        //   서버 쪽(_linkify)에서 텍스트 단계에 referrerpolicy 속성을 끼워 넣는
+        //   시도를 했지만, 마크다운→HTML 변환 경로가 여러 갈래(마크다운 이미지
+        //   문법, 원문에 이미 있던 raw HTML 등)라 전부 커버하기 까다로웠다.
+        //   그래서 텍스트 처리 대신 "최종적으로 화면에 그려진 실제 <img> 엘리먼트"를
+        //   직접 잡아 속성을 설정한다 — 어떤 경로로 만들어졌든 결과는 항상 실제
+        //   DOM의 <img> 태그이므로 이 방식이 가장 확실하다.
+        function _kmapFixImgReferrer(root) {
+            (root || document).querySelectorAll('.ai-bubble img:not([data-kmap-fixed])').forEach(function (img) {
+                img.setAttribute('referrerpolicy', 'no-referrer');
+                img.setAttribute('data-kmap-fixed', '1');
+            });
+        }
+        _kmapFixImgReferrer();
+        // 스트리밍 중 계속 새로 추가되는 콘텐츠(및 대화 기록 불러오기)에도 적용되도록
+        // 채팅 영역 전체를 감시한다.
+        new MutationObserver(function (mutations) {
+            mutations.forEach(function (m) {
+                m.addedNodes.forEach(function (node) {
+                    if (node.nodeType !== 1) return;   // element node 만
+                    if (node.tagName === 'IMG') {
+                        node.setAttribute('referrerpolicy', 'no-referrer');
+                        node.setAttribute('data-kmap-fixed', '1');
+                    } else if (node.querySelectorAll) {
+                        _kmapFixImgReferrer(node);
+                    }
+                });
+            });
+        }).observe(document.body, {childList: true, subtree: true});
+
         // ★ 사이드바 폭 마우스 드래그 리사이즈.
         //   폴링 없이 리사이저 엘리먼트가 DOM에 나타날 때까지 짧게 재시도만 하고,
         //   이후 로직은 전부 순수 클라이언트 이벤트라 타이밍 경쟁 문제가 없다.
