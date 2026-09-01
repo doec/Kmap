@@ -52,6 +52,15 @@ _DOI_RE = re.compile(
 #   아예 Referer 를 안 보내게 한다.
 _MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\((\S+?)\)')
 
+# ★ 위 마크다운 이미지 변환은 LLM이 진짜 마크다운 문법(![]())으로 이미지를 낸
+#   경우만 잡는다. 그런데 실측해보니 LLM이 Confluence 원문에 이미 있던 raw
+#   <img src="..."> HTML 태그를 그대로 답변에 옮겨 적는 경우가 있었다 — 이건
+#   markdown2 가 raw HTML 로 그대로 통과시켜버려서 referrerpolicy 가 안 붙은
+#   채 렌더링됐다(실측: 변환이 전혀 적용 안 된 <img> 가 그대로 나옴). 그래서
+#   이미 <img> 태그인데 referrerpolicy 가 없는 경우도 별도로 잡아서 속성만
+#   끼워넣는다.
+_RAW_IMG_TAG_RE = re.compile(r'<img\b(?![^>]*\breferrerpolicy=)([^>]*)>', re.IGNORECASE)
+
 
 # 수식 구분자 변환용 정규식.
 # ★ LLM 은 수식을 $...$ / $$...$$ 로 감싸는데, 마크다운이 그 사이의 '_', '*' 를
@@ -201,6 +210,7 @@ def _linkify(text: str) -> str:
             return (f'<img src="{src}" alt="{alt}" '
                     f'referrerpolicy="no-referrer" style="max-width:100%;">')
         t = _MD_IMAGE_RE.sub(_md_image_to_html, t)
+        t = _RAW_IMG_TAG_RE.sub(lambda m: f'<img referrerpolicy="no-referrer"{m.group(1)}>', t)
         t = _BARE_URL_RE.sub(lambda m: f'[{m.group(1)}]({m.group(1)})', t)
         t = _DOI_RE.sub(
             lambda m: f'[{m.group(1)}](https://doi.org/{m.group(2)})', t
