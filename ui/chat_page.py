@@ -594,20 +594,34 @@ def build_chat_page(request: Request = None):
         });
 
         // ★ 답변 안의 <img> 는 Confluence 등 사내 이미지 서버를 가리키는 경우가
-        //   있는데, 페이지 안에 인라인으로 로드하면 브라우저가 Referer 헤더로
-        //   "KMap 도메인에서 왔다"는 걸 같이 보내서 403으로 차단되는 경우가 있다
-        //   (새 탭에서 URL을 직접 열면 정상 로드되는 게 이 증상의 특징).
-        //   서버 쪽(_linkify)에서 텍스트 단계에 referrerpolicy 속성을 끼워 넣는
-        //   시도를 했지만, 마크다운→HTML 변환 경로가 여러 갈래(마크다운 이미지
-        //   문법, 원문에 이미 있던 raw HTML 등)라 전부 커버하기 까다로웠다.
-        //   그래서 텍스트 처리 대신 "최종적으로 화면에 그려진 실제 <img> 엘리먼트"를
-        //   직접 잡아 속성을 설정한다 — 어떤 경로로 만들어졌든 결과는 항상 실제
-        //   DOM의 <img> 태그이므로 이 방식이 가장 확실하다.
-        function _kmapFixImgReferrer(root) {
-            (root || document).querySelectorAll('.ai-bubble img:not([data-kmap-fixed])').forEach(function (img) {
-                img.setAttribute('referrerpolicy', 'no-referrer');
-                img.setAttribute('data-kmap-fixed', '1');
+        //   있는데, 실측 결과(Network 탭) 원인은 Referer 가 아니라 로그인 세션
+        //   쿠키였다 — 302 로 로그인 페이지로 리다이렉트됨. Confluence 로그인
+        //   쿠키가 SameSite=Lax 로 설정돼 있으면, 브라우저는 "새 탭에서 직접 열기"
+        //   같은 최상위 탐색에는 쿠키를 보내지만 KMap 페이지 안의 <img>(하위
+        //   리소스 요청)에는 쿠키를 아예 안 보낸다 — 그래서 새 탭에서는 보이는데
+        //   인라인으로는 항상 깨진다. 이건 서버(Confluence)가 정하는 쿠키 정책이라
+        //   페이지 쪽에서 referrerpolicy 를 아무리 설정해도 우회할 수 없다.
+        //   ★ 그래서 접근을 바꾼다: 이미지를 억지로 인라인으로 띄우려 하지 않고,
+        //   로드에 실패하면(=인증이 필요한 사내 이미지) 자동으로 "새 탭에서
+        //   보기" 클릭 링크로 교체한다. 공개 이미지는 그대로 보이고, 인증이
+        //   필요한 이미지는 깨진 아이콘 대신 클릭 가능한 링크가 남는다.
+        function _kmapFixImg(img) {
+            img.setAttribute('referrerpolicy', 'no-referrer');
+            img.setAttribute('data-kmap-fixed', '1');
+            img.addEventListener('error', function onErr() {
+                img.removeEventListener('error', onErr);
+                var a = document.createElement('a');
+                a.href = img.src;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.textContent = '🖼️ ' + (img.alt || '이미지') + ' (로그인이 필요한 이미지 — 새 탭에서 보기)';
+                a.style.color = '#6366f1';
+                a.style.textDecoration = 'underline';
+                if (img.parentNode) img.parentNode.replaceChild(a, img);
             });
+        }
+        function _kmapFixImgReferrer(root) {
+            (root || document).querySelectorAll('.ai-bubble img:not([data-kmap-fixed])').forEach(_kmapFixImg);
         }
         _kmapFixImgReferrer();
         // 스트리밍 중 계속 새로 추가되는 콘텐츠(및 대화 기록 불러오기)에도 적용되도록
@@ -617,8 +631,7 @@ def build_chat_page(request: Request = None):
                 m.addedNodes.forEach(function (node) {
                     if (node.nodeType !== 1) return;   // element node 만
                     if (node.tagName === 'IMG') {
-                        node.setAttribute('referrerpolicy', 'no-referrer');
-                        node.setAttribute('data-kmap-fixed', '1');
+                        _kmapFixImg(node);
                     } else if (node.querySelectorAll) {
                         _kmapFixImgReferrer(node);
                     }
