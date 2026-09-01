@@ -203,6 +203,30 @@ def _fix_unbalanced_code_fence(text: str) -> str:
     return text
 
 
+def _find_safe_commit_point(text: str) -> int:
+    """
+    스트리밍 중인 텍스트에서 마크다운으로 "확정 렌더링"해도 안전한 마지막 지점을
+    찾는다 — 그 지점 이전 내용은 앞으로 다시 안 바뀔 완성된 문단들이므로, 여기서
+    렌더링해두면 이후 청크가 더 와도 이미 그려진 부분의 구조가 다시 안 바뀐다
+    (표/리스트/인용문처럼 "완성 전엔 이렇게, 완성되면 저렇게" 파싱되는 구조가
+    스트리밍 중 계속 재해석되며 화면이 들썩이는 문제의 근본 원인이었다).
+
+    "빈 줄"(문단 구분, \n\n)을 안전한 경계로 삼되, 그 지점이 아직 안 닫힌 코드
+    펜스(```) 안이면 제외한다 — 코드 블록 내부의 빈 줄은 문단 구분이 아니다.
+    """
+    best = 0
+    idx = 0
+    while True:
+        idx = text.find('\n\n', idx)
+        if idx == -1:
+            break
+        candidate_end = idx + 2
+        if text[:candidate_end].count('```') % 2 == 0:   # 코드 펜스가 열려있지 않으면 안전
+            best = candidate_end
+        idx = candidate_end
+    return best
+
+
 def _linkify(text: str) -> str:
     """맨 URL과 DOI 문자열을 클릭 가능한 마크다운 링크로 변환한다. (URL에 붙은 ** 제거)"""
     if not text:
@@ -1341,20 +1365,26 @@ def build_chat_page(request: Request = None):
             loop    = asyncio.get_event_loop()
             gen     = rag.answer_stream(query, current_dataset, current_mode)
 
-            full_text    = ''
-            chunk_buffer = ''
-            chunk_count  = 0
-            # ★ 스트리밍 중에는 stream_el(그냥 텍스트, 마크다운 파싱 없음)을 보여주고,
-            #   스트림이 완전히 끝난 뒤에야 md_element(실제 렌더링)를 한 번만 만든다.
+            full_text      = ''
+            chunk_buffer   = ''
+            chunk_count    = 0
+            # ★ "완성된 문단만 굳히기" 전략으로 스트리밍 중 들썩임을 없앤다.
             #   예전엔 5청크마다 누적 텍스트 전체를 ui.markdown 으로 다시 파싱했는데,
             #   인용문 안에 중첩 리스트가 있는 것처럼 복잡한 구조는 텍스트가 조금씩
             #   늘어날 때마다 "리스트로 인식 ↔ 아직 미완성이라 문단으로 인식"을
-            #   오가며 레이아웃 구조 자체가 계속 바뀌어 화면이 위아래로 들썩이는
-            #   문제가 있었다(실측). 스트리밍 중엔 구조 해석이 필요 없는 순수
-            #   텍스트로만 보여주면 이 문제가 원천적으로 없다 — 수식(MathJax)도
-            #   같은 이유로 스트림 종료 후 한 번만 typeset 하고 있다(아래 참고).
-            stream_el    = None
-            md_element   = None
+            #   오가며 레이아웃 구조 자체가 계속 바뀌어 화면이 위아래로 들썩였다.
+            #   그래서 텍스트를 둘로 나눈다:
+            #     committed_text — 빈 줄(문단 구분)까지 완성된, 앞으로 다시 안 바뀔
+            #       부분. committed_el(ui.markdown)로 렌더링해 굳혀둔다. 같은 입력을
+            #       다시 렌더링해도 항상 같은 HTML 이 나오므로(결정적 파싱), 이미
+            #       그려진 부분의 구조가 재렌더링 때마다 바뀌는 일이 없다.
+            #     pending 부분 — 아직 안 끝난 마지막 문단/블록. 구조가 계속 바뀔 수
+            #       있으므로 pending_el(순수 텍스트)로만 보여준다.
+            #   스트림이 끝나면(아래 while 이후) 전체를 한 번에 최종 렌더링한다.
+            committed_text = ''
+            committed_el   = None
+            pending_el     = None
+            md_element     = None
 
             _SCROLL_JS = """
                 var el = document.querySelector('.q-scrollarea__container');
@@ -1388,13 +1418,25 @@ def build_chat_page(request: Request = None):
                 re.DOTALL
             )
 
+            def _flush(add_cursor: bool):
+                """committed_text 가 새로 늘어났으면 committed_el 을 다시 그리고
+                (완성된 부분이라 몇 번을 다시 그려도 항상 같은 HTML → 안 들썩임),
+                아직 안 끝난 나머지는 pending_el 에 순수 텍스트로 보여준다."""
+                nonlocal committed_text
+                split = _find_safe_commit_point(full_text)
+                if split > len(committed_text):
+                    committed_text = full_text[:split]
+                    committed_el.set_content(_linkify(committed_text))
+                pending = full_text[split:]
+                pending_el.set_text(pending + ('▌' if add_cursor else ''))
+
             while True:
                 event = await loop.run_in_executor(None, next, gen, None)
                 if event is None:
                     if chunk_buffer:
                         full_text += chunk_buffer
-                        if stream_el:
-                            stream_el.set_text(full_text)
+                        if committed_el:
+                            _flush(add_cursor=False)
                     break
 
                 # answer_stream 은 dict 이벤트를 내보낸다. (구버전 호환: 문자열이면 content 취급)
@@ -1406,18 +1448,19 @@ def build_chat_page(request: Request = None):
 
                 # 진행 상태 이벤트: 상태줄만 갱신하고 다음 이벤트 대기
                 if etype == 'status':
-                    if stream_el is None:      # 아직 답변 시작 전일 때만 표시
+                    if committed_el is None:      # 아직 답변 시작 전일 때만 표시
                         status_lbl.set_text(etext)
                         await asyncio.sleep(0)
                     continue
 
                 chunk = etext
 
-                # first content chunk: 상태 박스를 지우고 순수 텍스트 스트리밍 엘리먼트로 교체
-                if stream_el is None:
+                # first content chunk: 상태 박스를 지우고 committed/pending 두 엘리먼트로 교체
+                if committed_el is None:
                     status_box.delete()
                     with ai_col_ref:
-                        stream_el = ui.label('').style(
+                        committed_el = ui.markdown('', extras=['tables', 'fenced-code-blocks'])
+                        pending_el = ui.label('').style(
                             'white-space:pre-wrap; word-break:break-word; '
                             'font-size:14px; line-height:1.6;'
                         )
@@ -1432,28 +1475,30 @@ def build_chat_page(request: Request = None):
                     combined = _REPEAT_RE.sub('', full_text + chunk_buffer)
                     full_text, chunk_buffer = combined, ''
                     full_text += "\n\n_(반복 오류가 감지되어 답변 생성을 중단했습니다. 다시 질문해 주세요.)_"
-                    stream_el.set_text(full_text)
+                    _flush(add_cursor=False)
                     print("[Debug] LLM 응답 반복 루프 감지 → 스트림 중단")
                     break
 
                 if chunk_count % 5 == 0:
                     full_text    += chunk_buffer
                     chunk_buffer  = ''
-                    stream_el.set_text(full_text + '▌')
+                    _flush(add_cursor=True)
                     try:
                         await _page_client.run_javascript(_SCROLL_JS)
                     except Exception:
                         pass
                     await asyncio.sleep(0)
 
-            # ★ 스트림이 완전히 끝난 뒤 딱 한 번만 실제 마크다운으로 렌더링한다
-            #   (위 stream_el 은 순수 텍스트였으므로 여기서 처음 구조가 잡힌다).
-            if stream_el is None:
+            # ★ 스트림이 완전히 끝난 뒤 딱 한 번만 전체를 다시 최종 렌더링한다 —
+            #   committed_el/pending_el 은 지워버리고 md_element 하나로 합친다
+            #   (마지막 pending 조각까지 포함해 완전한 최종본을 보장하기 위함).
+            if committed_el is None:
                 status_box.delete()
                 with ai_col_ref:
                     md_element = ui.markdown('(응답을 받지 못했습니다)')
             else:
-                stream_el.delete()
+                committed_el.delete()
+                pending_el.delete()
                 with ai_col_ref:
                     md_element = ui.markdown(_linkify(full_text), extras=['tables', 'fenced-code-blocks'])
 
