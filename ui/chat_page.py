@@ -42,6 +42,16 @@ _DOI_RE = re.compile(
     re.IGNORECASE
 )
 
+# ★ 마크다운 이미지(![대체텍스트](URL))가 사내 이미지 서버(Confluence 첨부 등)를
+#   가리킬 때, 페이지 안에 <img> 로 인라인 로드하면 브라우저가 Referer 헤더로
+#   "KMap 도메인에서 왔다"는 걸 같이 보내는데, 서버가 이 Referer 를 보고
+#   403 으로 차단하는 경우가 있다(실측: 깨진 이미지 아이콘으로 뜨지만 새 탭에서
+#   URL 을 직접 열면 정상적으로 보임 — Referer 유무 차이가 원인이라는 뜻).
+#   markdown2 가 자동으로 만드는 <img> 태그엔 속성을 못 끼워넣으므로, 이미지
+#   문법을 직접 raw HTML <img referrerpolicy="no-referrer"> 로 바꿔서 브라우저가
+#   아예 Referer 를 안 보내게 한다.
+_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\((\S+?)\)')
+
 
 # 수식 구분자 변환용 정규식.
 # ★ LLM 은 수식을 $...$ / $$...$$ 로 감싸는데, 마크다운이 그 사이의 '_', '*' 를
@@ -185,6 +195,12 @@ def _linkify(text: str) -> str:
 
     def _process(t: str) -> str:
         t = _convert_math_delims(t)
+        def _md_image_to_html(m: re.Match) -> str:
+            alt = m.group(1).replace('"', '&quot;')
+            src = m.group(2).replace('"', '%22')
+            return (f'<img src="{src}" alt="{alt}" '
+                    f'referrerpolicy="no-referrer" style="max-width:100%;">')
+        t = _MD_IMAGE_RE.sub(_md_image_to_html, t)
         t = _BARE_URL_RE.sub(lambda m: f'[{m.group(1)}]({m.group(1)})', t)
         t = _DOI_RE.sub(
             lambda m: f'[{m.group(1)}](https://doi.org/{m.group(2)})', t
